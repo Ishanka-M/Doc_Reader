@@ -53,71 +53,102 @@ def extract_south_asia(text, file_name):
     return rows
 
 # 4. Ocean Lanka Extraction Logic (updated for requested fields)
-def extract_ocean_lanka(text, file_name):
+def extract_ocean_lanka(text, file_name, pdf_pages=None):
+    """
+    Ocean Lanka PDF වලින් පහත ක්ෂේත්‍ර උකහා ගනී:
+    - Delivery Sheet No.
+    - Fabric Type
+    - Batch No.
+    - Our Colour No.
+    - R/No, Net Length, Net Weight (වගුවෙන්)
+    """
     rows = []
     
-    # Delivery Sheet No.
-    ds_search = re.search(r"Delivery Sheet No\.[\s\n\",:]*([A-Z0-9\-]+)", text, re.IGNORECASE)
-    delivery_sheet = ds_search.group(1) if ds_search else "N/A"
+    # ---------- 1. ශීර්ෂක දත්ත (Header fields) නිස්සාරණය ----------
+    def extract_field(pattern, text, flags=0):
+        match = re.search(pattern, text, flags)
+        return match.group(1).strip() if match else "N/A"
     
-    # Fabric Type (multi-line possible)
-    ft_search = re.search(r"Fabric Type[\s\n\",:]+(.*?)(?=\n\n|\"|BPF|Our Colour|Batch|$)", text, re.DOTALL | re.IGNORECASE)
-    fabric_type = ft_search.group(1).strip().replace('\n', ' ') if ft_search else "N/A"
-
-    # Batch No
-    bn_search = re.search(r"Batch No[\s\n\",:]+([A-Z0-9\-]+)", text, re.IGNORECASE)
-    batch_no = bn_search.group(1) if bn_search else "N/A"
+    delivery_sheet = extract_field(r"Delivery\s*Sheet\s*No\.?\s*[:.]?\s*([A-Z0-9\-]+)", text, re.IGNORECASE)
+    fabric_type    = extract_field(r"Fabric\s*Type\s*[:.]?\s*(.*?)(?=\n\s*\n|\n\s*[A-Z]|$)", text, re.DOTALL | re.IGNORECASE)
     
-    # Our Colour No (with possible surrounding quotes)
-    cn_search = re.search(r"Our Colour No\.?\s*\n?\s*\"?([^\n\"]+)\"?", text, re.IGNORECASE)
-    colour_no = cn_search.group(1).strip() if cn_search else "N/A"
+    # ---------- 2. වගු දත්ත නිස්සාරණය (pdfplumber භාවිතයෙන්) ----------
+    if pdf_pages:
+        for page in pdf_pages:
+            tables = page.extract_tables()
+            for table in tables:
+                # බොහෝ විට පළමු වගුව අවශ්‍ය වේ
+                for row in table:
+                    # අවම වශයෙන් තීරු 7ක් තිබිය යුතුය (R/No, Length, Weight, Size/Width, No of Pcs, Gross Weight, Dyeing and Finishing)
+                    if row and len(row) >= 7:
+                        roll_cell = str(row[0]).strip()
+                        # පළමු තීරුව රෝල් අංකයද? (ඉලක්කම් පමණක්)
+                        if re.match(r'^\d+$', roll_cell):
+                            length_cell = str(row[1]).strip().replace(',', '.')
+                            weight_cell = str(row[2]).strip().replace(',', '.')
+                            finishing_cell = str(row[6]).strip() if row[6] else ""  # Dyeing and Finishing column
+                            
+                            try:
+                                length_val = float(length_cell)
+                                weight_val = float(weight_cell)
+                                
+                                # ---------- 3. Dyeing and Finishing column එකෙන් Batch No, Colour No උකහා ගැනීම ----------
+                                batch_no = "N/A"
+                                colour_no = "N/A"
+                                
+                                # Batch No හඳුනාගැනීම (උදා: "Batch No. PAB45980P")
+                                bn_match = re.search(r"Batch\s*No\.?\s*[:.]?\s*([A-Z0-9\-]+)", finishing_cell, re.IGNORECASE)
+                                if bn_match:
+                                    batch_no = bn_match.group(1)
+                                
+                                # Our Colour No හඳුනාගැනීම (උදා: "Our Colour No. VS26164-01 C004 VS WHITE")
+                                cn_match = re.search(r"(?:Our\s*)?Colour\s*No\.?\s*[:.]?\s*(.*?)(?=\s*(?:Heat\s*Setting|$))", finishing_cell, re.IGNORECASE)
+                                if cn_match:
+                                    colour_no = cn_match.group(1).strip()
+                                
+                                # පේළිය DataFrame එකට එකතු කිරීම
+                                rows.append({
+                                    "Factory Source": "OCEAN LANKA",
+                                    "File Name": file_name,
+                                    "Delivery Sheet / Shipment ID": delivery_sheet,
+                                    "Main Batch No": batch_no,
+                                    "Color": colour_no,
+                                    "Fabric Type": fabric_type,
+                                    "Roll / R No": roll_cell,
+                                    "Lot Batch No": batch_no,  # Lot Batch No නොමැති නම් Main Batch No යොදන්න
+                                    "Net Weight (Kg)": weight_val,
+                                    "Net Length (yd)": length_val
+                                })
+                            except ValueError:
+                                continue  # සංඛ්‍යා පරිවර්තනය අසාර්ථක වුවහොත් මග හරින්න
     
-    # Table data: R/No, Net Length, Net Weight
-    # Regex adapted to match typical Ocean Lanka table format
-    # Look for patterns like: "12345" , "123.45" , "67.89"
-    table_pattern = re.compile(r',\s*\"(\d+)\s*\"\s*,\s*\"([\d\.,\s]+)\"\s*,\s*\"([\d\.,\s]+)\"')
-    matches = table_pattern.findall(text)
-    
-    # If no matches, try alternative pattern (for different PDF layouts)
-    if not matches:
-        # Alternative: lines with three comma-separated values
+    # ---------- 4. විකල්ප: pdfplumber අසාර්ථක වුවහොත් regex මගින් උත්සාහ කරන්න ----------
+    if not rows:
+        # සරල රේඛීය පාදක ක්‍රමයක් (අවශ්‍ය නම් පමණක්)
         lines = text.split('\n')
         for line in lines:
-            parts = line.strip().split(',')
-            if len(parts) >= 3:
-                # Try to extract roll, length, weight (may contain quotes)
-                roll_match = re.search(r'\"?(\d+)\"?', parts[0])
-                length_match = re.search(r'([\d\.]+)', parts[1].replace(',', '.'))
-                weight_match = re.search(r'([\d\.]+)', parts[2].replace(',', '.'))
-                if roll_match and length_match and weight_match:
-                    matches.append((
-                        roll_match.group(1),
-                        length_match.group(1),
-                        weight_match.group(1)
-                    ))
+            # රෝල් අංකය, දිග, බර යන අගයන් එක පේළියක තිබේදැයි පරීක්ෂා කරන්න
+            parts = line.strip().split()
+            if len(parts) >= 3 and parts[0].isdigit():
+                try:
+                    roll = parts[0]
+                    length = float(parts[1].replace(',', '.'))
+                    weight = float(parts[2].replace(',', '.'))
+                    rows.append({
+                        "Factory Source": "OCEAN LANKA",
+                        "File Name": file_name,
+                        "Delivery Sheet / Shipment ID": delivery_sheet,
+                        "Main Batch No": "N/A",
+                        "Color": "N/A",
+                        "Fabric Type": fabric_type,
+                        "Roll / R No": roll,
+                        "Lot Batch No": "N/A",
+                        "Net Weight (Kg)": weight,
+                        "Net Length (yd)": length
+                    })
+                except ValueError:
+                    continue
     
-    for m in matches:
-        roll_no = m[0].strip()
-        # Convert comma decimal separators to dots
-        length_val = m[1].replace(',', '.').replace('\n', '').strip()
-        weight_val = m[2].replace(',', '.').replace('\n', '').strip()
-        
-        try:
-            rows.append({
-                "Factory Source": "OCEAN LANKA",
-                "File Name": file_name,
-                "Delivery Sheet / Shipment ID": delivery_sheet,
-                "Main Batch No": batch_no,
-                "Color": colour_no,          # Our Colour No
-                "Fabric Type": fabric_type,
-                "Roll / R No": roll_no,
-                "Lot Batch No": batch_no,    # Lot Batch No same as Main Batch No if not available separately
-                "Net Weight (Kg)": float(weight_val),
-                "Net Length (yd)": float(length_val)
-            })
-        except ValueError:
-            continue
-            
     return rows
 
 # 5. පරිශීලක අතුරුමුහුණත (Streamlit UI)
@@ -139,13 +170,15 @@ if uploaded_files:
         for file in uploaded_files:
             with pdfplumber.open(file) as pdf:
                 full_text = ""
-                for page in pdf.pages:
+                pages = pdf.pages  # page objects ලැයිස්තුව
+                for page in pages:
                     full_text += (page.extract_text() or "") + "\n"
                 
                 if factory_type == "SOUTH ASIA":
                     all_extracted_data.extend(extract_south_asia(full_text, file.name))
                 else:
-                    all_extracted_data.extend(extract_ocean_lanka(full_text, file.name))
+                    # pdf_pages ලබාදීම
+                    all_extracted_data.extend(extract_ocean_lanka(full_text, file.name, pdf_pages=pages))
 
     if all_extracted_data:
         df = pd.DataFrame(all_extracted_data)
