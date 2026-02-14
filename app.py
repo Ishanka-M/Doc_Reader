@@ -9,6 +9,7 @@ st.set_page_config(page_title="Textile Data Extractor Pro", layout="wide")
 
 # Header කොටස
 st.title("Bulk Textile Packing List Extractor")
+st.info("South Asia සහ Ocean Lanka Packing Lists සඳහා පමණි.")
 st.markdown("---")
 
 # 2. Reset Functionality
@@ -22,7 +23,7 @@ def reset_app():
 # 3. South Asia Extraction Logic
 def extract_south_asia(text, file_name):
     rows = []
-    # Header දත්ත [cite: 9, 10]
+    # Header දත්ත හඳුනා ගැනීම [cite: 9, 10]
     ship_id = re.search(r"Shipment Id[\s\n\",:]+(\d+)", text)
     batch_main = re.search(r"Batch No[\s\n\",:]+(\d+)", text)
     color = re.search(r"Color Name & No[\s\n\",:]+(.*?)\n", text)
@@ -33,7 +34,7 @@ def extract_south_asia(text, file_name):
     color_info = color.group(1).strip().replace('"', '').replace(':', '').strip() if color else "N/A"
     fabric_type = f_type.group(1).strip().replace('"', '').replace(':', '').strip() if f_type else "N/A"
 
-    # වගුවේ දත්ත [cite: 15]
+    # වගුවේ දත්ත (Roll #, Lot Batch No, Kg, yd) [cite: 15]
     pattern = re.compile(r"(\d{7})\s+([\d\-*]+)\s+(\d+\.\d+)\s+(\d+\.\d+)")
     matches = pattern.findall(text)
     for m in matches:
@@ -67,7 +68,8 @@ def extract_ocean_lanka(text, file_name):
     bn_search = re.search(r"Batch No\s+([A-Z0-9]+)", text)
     batch_no = bn_search.group(1) if bn_search else "N/A"
     
-    # --- Our Colour No සහ Heat Setting එකට එකතු කිරීම  ---
+    # --- Colour No සහ Heat Setting එකට එකතු කිරීම  ---
+    # ඔබ ඉල්ලා සිටි පරිදි: VS26164-01 C004 VS WHITE 95D1/LARGE DOTS
     cn_match = re.search(r"Our Colour No\.\s*\n\s*\"?([^\n\"]+)\"?", text)
     hs_match = re.search(r"Heat Setting\s*\n\s*\"?([^\n\"]+)\"?", text)
     
@@ -75,13 +77,14 @@ def extract_ocean_lanka(text, file_name):
     heat_part = hs_match.group(1).strip() if hs_match else ""
     combined_color = f"{color_part} {heat_part}".strip() if color_part or heat_part else "N/A"
 
-    # 📊 වගුවේ දත්ත හඳුනාගැනීම (Ocean Lanka විශේෂිත රටාව) 
-    # රටාව: , "අංකය" , "දිග" , "බර"
+    # 📊 Ocean Lanka වගු දත්ත හඳුනාගැනීම (විශේෂිත Regex රටාව) 
+    # රටාව: , "RollNo" , "Length" , "Weight"
     table_pattern = re.compile(r",\s*\"(\d+)\s*\"\s*,\s*\"([\d\.,\s]+)\"\s*,\s*\"([\d\.,\s]+)\"")
     matches = table_pattern.findall(text)
     
     for m in matches:
         roll_no = m[0].strip()
+        # කොමා වෙනුවට තිත් භාවිතා කර අගයන් පිරිසිදු කිරීම 
         length_val = m[1].replace(',', '.').replace('\n', '').strip()
         weight_val = m[2].replace(',', '.').replace('\n', '').strip()
         
@@ -103,7 +106,7 @@ def extract_ocean_lanka(text, file_name):
             
     return rows
 
-# 5. පරිශීලක අතුරුමුහුණත
+# 5. පරිශීලක අතුරුමුහුණත (Streamlit UI)
 factory_type = st.selectbox("ආයතනය තෝරන්න (Select Factory)", ["SOUTH ASIA", "OCEAN LANKA"])
 
 uploaded_files = st.file_uploader(
@@ -117,25 +120,26 @@ if st.button("Reset All"):
     reset_app()
 
 if uploaded_files:
-    all_data = []
+    all_extracted_data = []
     with st.spinner("දත්ත කියවමින් පවතී..."):
         for file in uploaded_files:
             with pdfplumber.open(file) as pdf:
                 full_text = ""
                 for page in pdf.pages:
+                    # PDF හි ඇති පෙළ සහ වගු දත්ත නිවැරදිව ලබා ගැනීම [cite: 21, 25]
                     full_text += (page.extract_text() or "") + "\n"
                 
                 if factory_type == "SOUTH ASIA":
-                    all_data.extend(extract_south_asia(full_text, file.name))
+                    all_extracted_data.extend(extract_south_asia(full_text, file.name))
                 else:
-                    all_data.extend(extract_ocean_lanka(full_text, file.name))
+                    all_extracted_data.extend(extract_ocean_lanka(full_text, file.name))
 
-    if all_data:
-        df = pd.DataFrame(all_data)
+    if all_extracted_data:
+        df = pd.DataFrame(all_extracted_data)
         st.success(f"ගොනු {len(uploaded_files)} සාර්ථකව කියවන ලදී.")
         st.dataframe(df, use_container_width=True)
 
-        # Excel Export
+        # Excel ගොනුවක් ලෙස ලබා ගැනීම
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
@@ -147,7 +151,7 @@ if uploaded_files:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
-        st.error("දත්ත හඳුනා ගැනීමට නොහැකි විය. කරුණාකර නිවැරදි ආයතනය තෝරා ඇත්දැයි පරීක්ෂා කරන්න.")
+        st.error("දත්ත හඳුනා ගැනීමට නොහැකි විය. කරුණාකර නිවැරදි ආයතනය තෝරා ඇති බව සහ PDF ගොනුව නිවැරදි බව පරීක්ෂා කරන්න.")
 
 st.markdown("---")
 st.markdown("<div style='text-align: center; color: gray;'>Developed by <b>Ishanka Madusanka</b></div>", unsafe_allow_html=True)
