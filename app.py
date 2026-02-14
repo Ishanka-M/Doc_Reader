@@ -49,39 +49,41 @@ def extract_south_asia(text, file_name):
         })
     return rows
 
-# 4. Ocean Lanka Extraction Logic (වැඩිදියුණු කළ අනුවාදය)
+# 4. Ocean Lanka Extraction Logic (අලුත්ම සහ සාර්ථකම ක්‍රමය)
 def extract_ocean_lanka(text, file_name):
     rows = []
     
-    # Delivery Sheet No
-    ds_search = re.search(r"Delivery\s*Sheet\s*No\.?[\s\n\",]+([A-Z0-9]+)", text, re.IGNORECASE)
+    # Delivery Sheet No ලබා ගැනීම
+    ds_search = re.search(r"Delivery Sheet No\.\s*\",\s*\"([A-Z0-9]+)", text, re.IGNORECASE)
     delivery_sheet = ds_search.group(1) if ds_search else "N/A"
     
-    # Fabric Type
-    ft_search = re.search(r"Fabric\s*Type[\s\n\",]+(.*?)(?=\n\n|\"|BPF|$)", text, re.DOTALL | re.IGNORECASE)
-    fabric_type = ft_search.group(1).strip().replace('\n', ' ') if ft_search else "N/A"
+    # Fabric Type ලබා ගැනීම
+    ft_search = re.search(r"Fabric Type\s*\",\s*\"(.*?)(?=\n\n|\"|BPF|$)", text, re.DOTALL | re.IGNORECASE)
+    fabric_type_raw = ft_search.group(1).strip() if ft_search else "N/A"
+    fabric_type = fabric_type_raw.split('\n')[-1].replace('"', '').strip()
 
-    # Batch No
-    bn_search = re.search(r"Batch\s*No\s+([A-Z0-9]+)", text, re.IGNORECASE)
+    # Batch No ලබා ගැනීම
+    bn_search = re.search(r"Batch No\.\s*\",\s*\"([A-Z0-9]+)", text, re.IGNORECASE)
     batch_no = bn_search.group(1) if bn_search else "N/A"
     
-    # --- Our Colour No සහ Heat Setting එකට එකතු කිරීම ---
-    # ලේඛනයේ ඇති "Our Colour No." සහ "Heat Setting" පේළි හඳුනා ගැනීම
-    cn_match = re.search(r"Our\s*Colour\s*No\.?[\s\n\",]+(.*?)(?=\n|Heat|$)", text, re.DOTALL | re.IGNORECASE)
-    hs_match = re.search(r"Heat\s*Setting[\s\n\",]+(.*?)(?=\n|$)", text, re.IGNORECASE)
+    # Our Colour No සහ Heat Setting සොයාගෙන එකතු කිරීම
+    cn_match = re.search(r"Our Colour No\.\s*\",\s*\"(.*?)\"", text, re.IGNORECASE)
+    hs_match = re.search(r"Heat Setting\s*\",\s*\"(.*?)\"", text, re.IGNORECASE)
     
-    color_val = cn_match.group(1).strip().replace('"', '').replace('\n', ' ') if cn_match else ""
-    heat_val = hs_match.group(1).strip().replace('"', '') if hs_match else ""
-    
-    # ඔබ ඉල්ලා සිටි පරිදි: VS26164-01 C004 VS WHITE 95D1/LARGE DOTS
+    color_val = cn_match.group(1).strip().replace('\n', ' ') if cn_match else ""
+    heat_val = hs_match.group(1).strip() if hs_match else ""
     combined_color = f"{color_val} {heat_val}".strip() if color_val or heat_val else "N/A"
 
-    # --- Ocean Lanka විශේෂිත වගු දත්ත රටාව (Regex) ---
-    # රටාව: , "RNo" , "Length" , "Weight"
-    # උදා: ,"2","52.00","14.35"
-    table_pattern = re.compile(r",\s*\"(\d+)\s*\"\s*,\s*\"([\d\.,\s]+)\"\s*,\s*\"([\d\.,\s]+)\"")
+    # වගු දත්ත සඳහා Regex රටාව (Ocean Lanka T54090 සඳහා විශේෂිතයි)
+    # මෙම රටාව මගින් ,"2","52.00","14.35" වැනි දත්ත නිවැරදිව හඳුනාගනී.
+    table_pattern = re.compile(r",\s*\"(\d+)\n\"\s*,\s*\"([\d\.,\s\n]+)\"\s*,\s*\"([\d\.,\s\n]+)\"")
     matches = table_pattern.findall(text)
     
+    if not matches:
+        # විකල්ප රටාවක් (සමහර විට \n නොමැති නම්)
+        table_pattern_alt = re.compile(r",\s*\"(\d+)\"\s*,\s*\"([\d\.,\s]+)\"\s*,\s*\"([\d\.,\s]+)\"")
+        matches = table_pattern_alt.findall(text)
+
     for m in matches:
         roll_no = m[0].strip()
         length_val = m[1].replace(',', '.').replace('\n', '').strip()
@@ -105,7 +107,7 @@ def extract_ocean_lanka(text, file_name):
             
     return rows
 
-# 5. UI කොටස
+# 5. පරිශීලක අතුරුමුහුණත
 factory_type = st.selectbox("ආයතනය තෝරන්න (Select Factory)", ["SOUTH ASIA", "OCEAN LANKA"])
 
 uploaded_files = st.file_uploader(
@@ -146,7 +148,7 @@ if uploaded_files:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
-        st.error("දත්ත හඳුනා ගැනීමට නොහැකි විය. කරුණාකර PDF එක පරීක්ෂා කරන්න.")
+        st.error("දත්ත හඳුනා ගැනීමට නොහැකි විය. කරුණාකර PDF එකේ වර්ගය (Factory) නිවැරදිව තෝරා ඇත්දැයි බලන්න.")
 
 st.markdown("---")
 st.markdown("<div style='text-align: center; color: gray;'>Developed by <b>Ishanka Madusanka</b></div>", unsafe_allow_html=True)
