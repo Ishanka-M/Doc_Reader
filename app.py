@@ -17,11 +17,10 @@ with col1:
         st.image(LOGO_URL, width=120)
     except:
         st.write("Logo Loading...")
-
 with col2:
     st.title("Bulk Textile Packing List Extractor")
 
-# 3. Reset කිරීමේ පහසුකම (Session State)
+# 3. Reset කිරීමේ පහසුකම
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
@@ -32,12 +31,13 @@ def reset_app():
 # 4. South Asia සඳහා දත්ත කියවීමේ ශ්‍රිතය
 def extract_south_asia(text, file_name):
     rows = []
+    # Header දත්ත [cite: 9, 10]
     shipment_id = re.search(r"Shipment Id\s*:\s*(\d+)", text).group(1) if re.search(r"Shipment Id\s*:\s*(\d+)", text) else "N/A"
     batch_no_main = re.search(r"Batch No\s*:\s*(\d+)", text).group(1) if re.search(r"Batch No\s*:\s*(\d+)", text) else "N/A"
     color = re.search(r"Color Name & No\s*:\s*(.*)", text).group(1) if re.search(r"Color Name & No\s*:\s*(.*)", text) else "N/A"
     f_type = re.search(r"Fabric Type\s*:\s*(.*)", text).group(1) if re.search(r"Fabric Type\s*:\s*(.*)", text) else "N/A"
     
-    # වගුවේ දත්ත (Roll #, Lot Batch No, Kg, yd)
+    # වගුවේ දත්ත (Roll #, Lot Batch No, Kg, yd) [cite: 15]
     pattern = re.compile(r"(\d{7})\s+([\d\-*]+)\s+(\d+\.\d+)\s+(\d+\.\d+)")
     matches = pattern.findall(text)
     for m in matches:
@@ -59,7 +59,7 @@ def extract_south_asia(text, file_name):
 def extract_ocean_lanka(text, file_name):
     rows = []
     
-    # Header දත්ත කියවීම (Regex වැඩිදියුණු කර ඇත)
+    # Header දත්ත කියවීම [cite: 21, 24, 35, 36, 37]
     ds_match = re.search(r"Delivery Sheet No\.\s*,\s*\"([A-Z0-9]+)\"", text)
     delivery_sheet = ds_match.group(1) if ds_match else "N/A"
     
@@ -72,12 +72,13 @@ def extract_ocean_lanka(text, file_name):
     cn_match = re.search(r"Our Colour No\.\s*\n\s*(.*?)\n", text)
     color_no = cn_match.group(1).strip() if cn_match else "N/A"
 
-    # වගුවේ දත්ත කියවීම (R/ No, Net Length, Net Weight)
+    # වගුවේ දත්ත කියවීම (R/ No, Net Length, Net Weight) 
     # Ocean Lanka වගු පේළි රටාව: ,"No","Length","Weight"
     pattern = re.compile(r",\s*\"(\d+)\"\s*,\s*\"([\d\.,]+)\"\s*,\s*\"([\d\.,]+)\"")
     matches = pattern.findall(text)
     
     for m in matches:
+        # කොමා (,) තිත් (.) බවට පත් කිරීම
         length_val = m[1].replace(',', '.')
         weight_val = m[2].replace(',', '.')
         
@@ -120,12 +121,11 @@ if uploaded_files:
                 
                 if factory_type == "SOUTH ASIA":
                     all_extracted_data.extend(extract_south_asia(full_text, file.name))
-                else:
+                elif factory_type == "OCEAN LANKA":
                     all_extracted_data.extend(extract_ocean_lanka(full_text, file.name))
 
-    df = pd.DataFrame(all_extracted_data)
-    
-    if not df.empty:
+    if all_extracted_data:
+        df = pd.DataFrame(all_extracted_data)
         st.success(f"ගොනු {len(uploaded_files)} සාර්ථකව කියවන ලදී.")
         st.dataframe(df, use_container_width=True)
 
