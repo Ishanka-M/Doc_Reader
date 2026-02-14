@@ -5,18 +5,11 @@ import io
 import re
 
 # 1. පිටුවේ මූලික සැකසුම්
-st.set_page_config(page_title="Textile Data Extractor", layout="wide")
-
-# GitHub Logo URL
-LOGO_URL = "https://raw.githubusercontent.com/Ishanka-M/Doc_Reader/main/logo.png"
+st.set_page_config(page_title="Textile Data Extractor Pro", layout="wide")
 
 # Header කොටස
-col1, col2 = st.columns([1, 6])
-with col1:
-    try: st.image(LOGO_URL, width=120)
-    except: st.write("Logo Loading...")
-with col2:
-    st.title("Bulk Textile Packing List Extractor")
+st.title("Bulk Textile Packing List Extractor")
+st.markdown("---")
 
 # 2. Reset Functionality
 if 'uploader_key' not in st.session_state:
@@ -29,7 +22,7 @@ def reset_app():
 # 3. South Asia Extraction Logic
 def extract_south_asia(text, file_name):
     rows = []
-    # Header දත්ත හඳුනා ගැනීම [cite: 9, 10]
+    # Header දත්ත [cite: 9, 10]
     ship_id = re.search(r"Shipment Id[\s\n\",:]+(\d+)", text)
     batch_main = re.search(r"Batch No[\s\n\",:]+(\d+)", text)
     color = re.search(r"Color Name & No[\s\n\",:]+(.*?)\n", text)
@@ -37,10 +30,10 @@ def extract_south_asia(text, file_name):
 
     shipment_id = ship_id.group(1) if ship_id else "N/A"
     batch_no_main = batch_main.group(1) if batch_main else "N/A"
-    color_info = color.group(1).strip().replace('"', '') if color else "N/A"
-    fabric_type = f_type.group(1).strip().replace('"', '') if f_type else "N/A"
+    color_info = color.group(1).strip().replace('"', '').replace(':', '').strip() if color else "N/A"
+    fabric_type = f_type.group(1).strip().replace('"', '').replace(':', '').strip() if f_type else "N/A"
 
-    # වගුවේ දත්ත (Roll #, Lot Batch No, Kg, yd) [cite: 15]
+    # වගුවේ දත්ත [cite: 15]
     pattern = re.compile(r"(\d{7})\s+([\d\-*]+)\s+(\d+\.\d+)\s+(\d+\.\d+)")
     matches = pattern.findall(text)
     for m in matches:
@@ -67,26 +60,24 @@ def extract_ocean_lanka(text, file_name):
     delivery_sheet = ds_search.group(1) if ds_search else "N/A"
     
     # Fabric Type [cite: 21]
-    ft_search = re.search(r"Fabric Type[\s\n\",]+(.*?)(?=\n\n|\"|$)", text, re.DOTALL)
-    fabric_type_raw = ft_search.group(1).strip() if ft_search else "N/A"
-    fabric_type = fabric_type_raw.split('\n')[-1].replace('"', '').strip()
+    ft_search = re.search(r"Fabric Type[\s\n\",]+(.*?)(?=\n\n|\"|BPF|$)", text, re.DOTALL)
+    fabric_type = ft_search.group(1).strip().replace('\n', ' ') if ft_search else "N/A"
 
     # Batch No [cite: 35]
     bn_search = re.search(r"Batch No\s+([A-Z0-9]+)", text)
     batch_no = bn_search.group(1) if bn_search else "N/A"
     
-    # --- Our Colour No සහ Heat Setting එකට සම්බන්ධ කිරීම  ---
-    cn_match = re.search(r"Our Colour No\.[\s\n\",]+(.*?)(?=\nHeat Setting|\n[A-Z]|$)", text, re.DOTALL)
-    hs_match = re.search(r"Heat Setting[\s\n\",]+(.*?)\n", text)
+    # --- Our Colour No සහ Heat Setting එකට එකතු කිරීම  ---
+    cn_match = re.search(r"Our Colour No\.\s*\n\s*\"?([^\n\"]+)\"?", text)
+    hs_match = re.search(r"Heat Setting\s*\n\s*\"?([^\n\"]+)\"?", text)
     
-    color_val = cn_match.group(1).strip().replace('"', '').replace('\n', ' ') if cn_match else ""
-    heat_val = hs_match.group(1).strip().replace('"', '') if hs_match else ""
-    # "VS26164-01 C004 VS WHITE 95D1/LARGE DOTS" ආකාරයට එකතු කිරීම
-    final_color = f"{color_val} {heat_val}".strip() if color_val or heat_val else "N/A"
+    color_part = cn_match.group(1).strip() if cn_match else ""
+    heat_part = hs_match.group(1).strip() if hs_match else ""
+    combined_color = f"{color_part} {heat_part}".strip() if color_part or heat_part else "N/A"
 
-    # 📊 වගුවේ දත්ත (R/ No, Net Length, Net Weight) 
-    # මෙහි දත්ත අතර ඇති \n ඉවත් කර නිවැරදිව කියවීමට Regex වැඩිදියුණු කර ඇත
-    table_pattern = re.compile(r",\s*\"(\d+)[\s\n]*\"\s*,\s*\"([\d\.,\s\n]+)\"\s*,\s*\"([\d\.,\s\n]+)\"")
+    # 📊 වගුවේ දත්ත හඳුනාගැනීම (Ocean Lanka විශේෂිත රටාව) 
+    # රටාව: , "අංකය" , "දිග" , "බර"
+    table_pattern = re.compile(r",\s*\"(\d+)\s*\"\s*,\s*\"([\d\.,\s]+)\"\s*,\s*\"([\d\.,\s]+)\"")
     matches = table_pattern.findall(text)
     
     for m in matches:
@@ -100,7 +91,7 @@ def extract_ocean_lanka(text, file_name):
                 "File Name": file_name,
                 "Delivery Sheet / Shipment ID": delivery_sheet,
                 "Main Batch No": batch_no,
-                "Color": final_color,
+                "Color": combined_color,
                 "Fabric Type": fabric_type,
                 "Roll / R No": roll_no,
                 "Lot Batch No": batch_no,
@@ -112,13 +103,14 @@ def extract_ocean_lanka(text, file_name):
             
     return rows
 
-# 5. UI කොටස
-st.markdown("---")
+# 5. පරිශීලක අතුරුමුහුණත
 factory_type = st.selectbox("ආයතනය තෝරන්න (Select Factory)", ["SOUTH ASIA", "OCEAN LANKA"])
 
 uploaded_files = st.file_uploader(
-    f"{factory_type} PDF ගොනු upload කරන්න", type=["pdf"], 
-    accept_multiple_files=True, key=f"uploader_{st.session_state.uploader_key}"
+    f"{factory_type} PDF ගොනු upload කරන්න", 
+    type=["pdf"], 
+    accept_multiple_files=True, 
+    key=f"uploader_{st.session_state.uploader_key}"
 )
 
 if st.button("Reset All"):
@@ -131,7 +123,7 @@ if uploaded_files:
             with pdfplumber.open(file) as pdf:
                 full_text = ""
                 for page in pdf.pages:
-                    full_text += page.extract_text() + "\n"
+                    full_text += (page.extract_text() or "") + "\n"
                 
                 if factory_type == "SOUTH ASIA":
                     all_data.extend(extract_south_asia(full_text, file.name))
@@ -143,12 +135,14 @@ if uploaded_files:
         st.success(f"ගොනු {len(uploaded_files)} සාර්ථකව කියවන ලදී.")
         st.dataframe(df, use_container_width=True)
 
+        # Excel Export
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
         
         st.download_button(
-            label="📥 Download Excel File", data=output.getvalue(),
+            label="📥 Download Excel File", 
+            data=output.getvalue(),
             file_name=f"{factory_type}_Extracted_Data.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
