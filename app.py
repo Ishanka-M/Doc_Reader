@@ -29,7 +29,7 @@ def reset_app():
 # 3. South Asia Extraction Logic
 def extract_south_asia(text, file_name):
     rows = []
-    # Header දත්ත: Shipment Id, Batch No, Color, Fabric Type [cite: 9, 10]
+    # Header දත්ත හඳුනා ගැනීම [cite: 9, 10]
     ship_id = re.search(r"Shipment Id[\s\n\",:]+(\d+)", text)
     batch_main = re.search(r"Batch No[\s\n\",:]+(\d+)", text)
     color = re.search(r"Color Name & No[\s\n\",:]+(.*?)\n", text)
@@ -40,7 +40,7 @@ def extract_south_asia(text, file_name):
     color_info = color.group(1).strip().replace('"', '') if color else "N/A"
     fabric_type = f_type.group(1).strip().replace('"', '') if f_type else "N/A"
 
-    # වගුවේ දත්ත: Roll #, Lot Batch No, Kg, yd [cite: 15]
+    # වගුවේ දත්ත (Roll #, Lot Batch No, Kg, yd) [cite: 15]
     pattern = re.compile(r"(\d{7})\s+([\d\-*]+)\s+(\d+\.\d+)\s+(\d+\.\d+)")
     matches = pattern.findall(text)
     for m in matches:
@@ -62,11 +62,11 @@ def extract_south_asia(text, file_name):
 def extract_ocean_lanka(text, file_name):
     rows = []
     
-    # Delivery Sheet No 
+    # Delivery Sheet No [cite: 24]
     ds_search = re.search(r"Delivery Sheet No\.[\s\n\",]+([A-Z0-9]+)", text)
     delivery_sheet = ds_search.group(1) if ds_search else "N/A"
     
-    # Fabric Type 
+    # Fabric Type [cite: 21]
     ft_search = re.search(r"Fabric Type[\s\n\",]+(.*?)(?=\n\n|\"|$)", text, re.DOTALL)
     fabric_type_raw = ft_search.group(1).strip() if ft_search else "N/A"
     fabric_type = fabric_type_raw.split('\n')[-1].replace('"', '').strip()
@@ -75,16 +75,18 @@ def extract_ocean_lanka(text, file_name):
     bn_search = re.search(r"Batch No\s+([A-Z0-9]+)", text)
     batch_no = bn_search.group(1) if bn_search else "N/A"
     
-    # Our Colour No [cite: 37] සහ Heat Setting [cite: 39] එකට සම්බන්ධ කිරීම
-    cn_match = re.search(r"Our Colour No\.[\s\n\",]+(.*?)\nHeat Setting", text, re.DOTALL)
+    # --- Our Colour No සහ Heat Setting එකට සම්බන්ධ කිරීම  ---
+    cn_match = re.search(r"Our Colour No\.[\s\n\",]+(.*?)(?=\nHeat Setting|\n[A-Z]|$)", text, re.DOTALL)
     hs_match = re.search(r"Heat Setting[\s\n\",]+(.*?)\n", text)
     
     color_val = cn_match.group(1).strip().replace('"', '').replace('\n', ' ') if cn_match else ""
     heat_val = hs_match.group(1).strip().replace('"', '') if hs_match else ""
+    # "VS26164-01 C004 VS WHITE 95D1/LARGE DOTS" ආකාරයට එකතු කිරීම
     final_color = f"{color_val} {heat_val}".strip() if color_val or heat_val else "N/A"
 
-    # වගුවේ දත්ත  (R/ No, Net Length, Net Weight)
-    table_pattern = re.compile(r",\s*\"(\d+)\s*\"\s*,\s*\"([\d\.,\s]+)\"\s*,\s*\"([\d\.,\s]+)\"")
+    # 📊 වගුවේ දත්ත (R/ No, Net Length, Net Weight) 
+    # මෙහි දත්ත අතර ඇති \n ඉවත් කර නිවැරදිව කියවීමට Regex වැඩිදියුණු කර ඇත
+    table_pattern = re.compile(r",\s*\"(\d+)[\s\n]*\"\s*,\s*\"([\d\.,\s\n]+)\"\s*,\s*\"([\d\.,\s\n]+)\"")
     matches = table_pattern.findall(text)
     
     for m in matches:
@@ -110,7 +112,7 @@ def extract_ocean_lanka(text, file_name):
             
     return rows
 
-# 5. පරිශීලක අතුරුමුහුණත (UI)
+# 5. UI කොටස
 st.markdown("---")
 factory_type = st.selectbox("ආයතනය තෝරන්න (Select Factory)", ["SOUTH ASIA", "OCEAN LANKA"])
 
