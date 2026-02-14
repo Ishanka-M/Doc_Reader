@@ -9,122 +9,156 @@ import requests
 from streamlit_lottie import st_lottie
 
 # --- 1. පද්ධතියේ මූලික සැකසුම් ---
-st.set_page_config(page_title="Textile AI Extractor Pro", layout="wide")
+st.set_page_config(page_title="Textile AI Extractor Pro 2026", layout="wide")
 
-# --- CUSTOM CSS (Animations & Styling) ---
-# මෙහි ඇති CSS මඟින් පසුබිම ලස්සනට වර්ණ මාරු කරයි (Gradient Animation)
+# --- CUSTOM CSS (Premium UI) ---
 st.markdown("""
     <style>
-    /* පසුබිම සඳහා Animated Gradient */
     .stApp {
-        background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
+        background: linear-gradient(-45deg, #1a1a2e, #16213e, #0f3460, #1a1a2e);
         background-size: 400% 400%;
         animation: gradient 15s ease infinite;
+        color: white;
     }
     @keyframes gradient {
         0% { background-position: 0% 50%; }
         50% { background-position: 100% 50%; }
         100% { background-position: 0% 50%; }
     }
-
-    /* Buttons සඳහා Hover effects */
+    /* Glassmorphism card effect for dataframe */
+    .stDataFrame {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
+        border-radius: 15px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 10px;
+    }
+    /* Button Styles */
     div.stButton > button:first-child {
-        background-color: #ffffff;
-        color: #e73c7e;
-        border-radius: 20px;
-        border: 2px solid #e73c7e;
-        transition: all 0.3s ease;
+        background-color: #4ecca3;
+        color: #1a1a2e;
+        border-radius: 25px;
+        border: none;
+        padding: 10px 24px;
         font-weight: bold;
+        transition: 0.3s;
     }
     div.stButton > button:first-child:hover {
-        background-color: #e73c7e;
-        color: white;
         transform: scale(1.05);
-    }
-    
-    /* Dataframe එකේ පෙනුම */
-    [data-testid="stDataFrame"] {
-        background: rgba(255, 255, 255, 0.8);
-        border-radius: 10px;
-        padding: 10px;
+        box-shadow: 0px 0px 15px #4ecca3;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# Lottie Load Function
+# Animation loading with error handling
 def load_lottieurl(url: str):
-    r = requests.get(url)
-    return r.json() if r.status_code == 200 else None
+    try:
+        r = requests.get(url, timeout=5)
+        return r.json() if r.status_code == 200 else None
+    except:
+        return None
 
 lottie_scanning = load_lottieurl("https://lottie.host/7e60655d-3652-4752-9f6e-71c1b1207907/68VjI2Fv6B.json")
 
-# --- HEADER SECTION ---
+# --- 2. HEADER SECTION ---
 LOGO_URL = "https://raw.githubusercontent.com/Ishanka-M/Doc_Reader/main/logo.png"
 
 col1, col2 = st.columns([1, 6])
 with col1:
     try: st.image(LOGO_URL, width=120)
-    except: st.write("Logo")
+    except: st.write("📂")
 with col2:
-    st.markdown("<h1 style='color: white;'>Bulk Textile Packing List Extractor</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color: white;'><i>Experience the power of AI-driven Data Extraction</i></p>", unsafe_allow_html=True)
+    st.markdown("<h1 style='color: #4ecca3;'>Textile Packing List Extractor Pro</h1>", unsafe_allow_html=True)
+    st.markdown("Automated AI Data Extraction | Gemini 3 Flash v2026")
 
 st.markdown("---")
 
-# --- 2. API KEY ROTATION ---
+# --- 3. API KEY ROTATION LOGIC ---
 API_KEYS = st.secrets.get("GEMINI_KEYS", [])
 
 def get_ai_response(prompt):
     for key in API_KEYS:
         try:
             genai.configure(api_key=key)
-            model = genai.GenerativeModel('gemini-3-flash-preview', 
-                                          generation_config={"response_mime_type": "application/json"})
+            model = genai.GenerativeModel(
+                model_name='gemini-3-flash-preview',
+                generation_config={"response_mime_type": "application/json"}
+            )
             response = model.generate_content(prompt)
             return response.text
-        except: continue
+        except:
+            continue
     return None
 
-# --- 3. EXTRACTION FUNCTIONS ---
+# --- 4. EXTRACTION LOGIC ---
 def extract_south_asia(text, file_name):
     rows = []
-    # (පෙර Regex Logic එකම මෙහි භාවිතා වේ)
+    ship_id = re.search(r"Shipment Id[\s\n\",:]+(\d+)", text)
+    batch_main = re.search(r"Batch No[\s\n\",:]+(\d+)", text)
+    color = re.search(r"Color Name & No[\s\n\",:]+(.*?)\n", text)
+    f_type = re.search(r"Fabric Type[\s\n\",:]+(.*?)\n", text)
+
+    s_id = ship_id.group(1) if ship_id else "N/A"
+    b_no = batch_main.group(1) if batch_main else "N/A"
+    c_info = color.group(1).strip() if color else "N/A"
+    f_info = f_type.group(1).strip() if f_type else "N/A"
+
     pattern = re.compile(r"(\d{7})\s+([\d\-*]+)\s+(\d+\.\d+)\s+(\d+\.\d+)")
     matches = pattern.findall(text)
     for m in matches:
         rows.append({
-            "Source": "SOUTH ASIA", "File": file_name,
-            "R No": m[0], "Net Weight": float(m[2]), "Net Length": float(m[3])
+            "Factory": "SOUTH ASIA", "File": file_name,
+            "Delivery/Shipment ID": s_id, "Main Batch": b_no,
+            "Color": c_info, "Fabric Type": f_info, "Roll No": m[0],
+            "Lot Batch": m[1], "Net Weight (Kg)": float(m[2]), "Net Length (yd)": float(m[3])
         })
     return rows
 
 def extract_ocean_lanka_ai(raw_text, file_name):
-    prompt = f"Extract packing list table into JSON: {raw_text}"
+    prompt = f"""
+    Extract data from this Ocean Lanka Packing List. Return ONLY a JSON list of objects.
+    Fields: Delivery_Sheet, Fabric_Type, Main_Batch, Color, Roll_No, Net_Weight, Net_Length.
+    Text: {raw_text}
+    """
     ai_res = get_ai_response(prompt)
     rows = []
     if ai_res:
         try:
             data = json.loads(ai_res)
-            # JSON Parse Logic (පෙර පරිදිම)
-            for item in data if isinstance(data, list) else data.get("table", []):
-                item["Source"] = "OCEAN LANKA"
-                item["File"] = file_name
-                rows.append(item)
+            if isinstance(data, dict) and "table" in data: data = data["table"]
+            if not isinstance(data, list): data = [data]
+            for item in data:
+                rows.append({
+                    "Factory": "OCEAN LANKA", "File": file_name,
+                    "Delivery/Shipment ID": item.get("Delivery_Sheet"),
+                    "Main Batch": item.get("Main_Batch"),
+                    "Color": item.get("Color"), "Fabric Type": item.get("Fabric_Type"),
+                    "Roll No": item.get("Roll_No"), "Lot Batch": item.get("Main_Batch"),
+                    "Net Weight (Kg)": item.get("Net_Weight"), "Net Length (yd)": item.get("Net_Length")
+                })
         except: pass
     return rows
 
-# --- 4. MAIN UI ---
+# --- 5. SIDEBAR & FILE UPLOAD ---
 with st.sidebar:
-    st_lottie(lottie_scanning, height=150)
-    st.header("Settings")
-    factory_type = st.radio("Factory", ["SOUTH ASIA", "OCEAN LANKA"])
-    st.info("ඔබේ PDF ගොනු මෙතැනට Drag කරන්න.")
+    if lottie_scanning:
+        st_lottie(lottie_scanning, height=150, key="side_anim")
+    else:
+        st.info("AI Analysis Mode: Active")
+    
+    st.header("Control Panel")
+    factory_type = st.radio("Select Source Factory:", ["SOUTH ASIA", "OCEAN LANKA"])
+    
+    if st.button("Clear All Data"):
+        st.rerun()
 
-uploaded_files = st.file_uploader("", type=["pdf"], accept_multiple_files=True)
+st.subheader(f"Upload {factory_type} Packing Lists (PDF)")
+uploaded_files = st.file_uploader("Upload files", type=["pdf"], accept_multiple_files=True, label_visibility="collapsed")
 
+# --- 6. PROCESSING ---
 if uploaded_files:
     all_data = []
-    with st.status("Analyzing Files...", expanded=True) as status:
+    with st.status("Gemini 3 Flash Processing...", expanded=True) as status:
         for file in uploaded_files:
             with pdfplumber.open(file) as pdf:
                 full_text = "\n".join([p.extract_text() or "" for p in pdf.pages])
@@ -132,20 +166,28 @@ if uploaded_files:
                     all_data.extend(extract_south_asia(full_text, file.name))
                 else:
                     all_data.extend(extract_ocean_lanka_ai(full_text, file.name))
-        status.update(label="Extraction Complete!", state="complete")
+        status.update(label="Analysis Completed Successfully!", state="complete", expanded=False)
 
     if all_data:
         st.balloons()
         df = pd.DataFrame(all_data)
+        st.markdown("### Extracted Data Results")
         st.dataframe(df, use_container_width=True)
 
-        # Excel Download Button
+        # Excel Export
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
         
-        st.download_button("📥 Download Excel Report", data=output.getvalue(),
-                           file_name=f"Extracted_Data.xlsx", type="primary")
+        st.download_button(
+            label="📥 Download Structured Excel Report",
+            data=output.getvalue(),
+            file_name=f"{factory_type}_Report_2026.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary"
+        )
+    else:
+        st.warning("No data found in the uploaded documents. Please check the factory selection.")
 
-# --- FOOTER ---
-st.markdown("<br><br><center style='color: white;'>Developed by <b>Ishanka Madusanka</b></center>", unsafe_allow_html=True)
+# --- 7. FOOTER ---
+st.markdown("<br><br><hr><center style='opacity: 0.6;'>Developed by <b>Ishanka Madusanka</b> | Built for Efficiency 2026</center>", unsafe_allow_html=True)
