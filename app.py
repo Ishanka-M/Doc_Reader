@@ -11,7 +11,7 @@ from streamlit_lottie import st_lottie
 # --- 1. පද්ධතියේ මූලික සැකසුම් ---
 st.set_page_config(page_title="Textile AI Extractor Pro 2026", layout="wide")
 
-# --- CUSTOM CSS (Premium UI) ---
+# --- CUSTOM CSS (Premium UI & Shipment Box Styling) ---
 st.markdown("""
     <style>
     .stApp {
@@ -45,7 +45,13 @@ st.markdown("""
         transform: scale(1.05);
         box-shadow: 0px 0px 15px #4ecca3;
     }
-    /* Metric Card Styling */
+    .shipment-card {
+        background-color: rgba(78, 204, 163, 0.1);
+        padding: 20px;
+        border-radius: 12px;
+        border-left: 6px solid #4ecca3;
+        margin-bottom: 20px;
+    }
     [data-testid="stMetricValue"] {
         color: #4ecca3 !important;
     }
@@ -62,7 +68,14 @@ def load_lottieurl(url: str):
 
 lottie_scanning = load_lottieurl("https://lottie.host/7e60655d-3652-4752-9f6e-71c1b1207907/68VjI2Fv6B.json")
 
-# --- 2. HEADER SECTION ---
+# --- 2. RESET FUNCTION ---
+def reset_system():
+    st.cache_data.clear()
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
+
+# --- 3. HEADER SECTION ---
 LOGO_URL = "https://raw.githubusercontent.com/Ishanka-M/Doc_Reader/main/logo.png"
 
 col1, col2 = st.columns([1, 6])
@@ -71,11 +84,11 @@ with col1:
     except: st.write("📂")
 with col2:
     st.markdown("<h1 style='color: #4ecca3;'>Textile Packing List Extractor Pro</h1>", unsafe_allow_html=True)
-    st.markdown("Automated AI Data Extraction | Gemini 3 Flash v2026")
+    st.markdown("Advanced Multi-Shipment AI Verification | 2026 Edition")
 
 st.markdown("---")
 
-# --- 3. API KEY ROTATION LOGIC ---
+# --- 4. API KEY ROTATION LOGIC ---
 API_KEYS = st.secrets.get("GEMINI_KEYS", [])
 
 def get_ai_response(prompt):
@@ -92,7 +105,7 @@ def get_ai_response(prompt):
             continue
     return None
 
-# --- 4. EXTRACTION LOGIC ---
+# --- 5. EXTRACTION LOGIC ---
 def extract_south_asia(text, file_name):
     rows = []
     ship_id = re.search(r"Shipment Id[\s\n\",:]+(\d+)", text)
@@ -117,11 +130,7 @@ def extract_south_asia(text, file_name):
     return rows
 
 def extract_ocean_lanka_ai(raw_text, file_name):
-    prompt = f"""
-    Extract data from this Ocean Lanka Packing List. Return ONLY a JSON list of objects.
-    Fields: Delivery_Sheet, Fabric_Type, Main_Batch, Color, Roll_No, Net_Weight, Net_Length.
-    Text: {raw_text}
-    """
+    prompt = f"Extract packing list details into JSON list (fields: Delivery_Sheet, Fabric_Type, Main_Batch, Color, Roll_No, Net_Weight, Net_Length) from: {raw_text}"
     ai_res = get_ai_response(prompt)
     rows = []
     if ai_res:
@@ -132,7 +141,7 @@ def extract_ocean_lanka_ai(raw_text, file_name):
             for item in data:
                 rows.append({
                     "Factory": "OCEAN LANKA", "File": file_name,
-                    "Delivery/Shipment ID": item.get("Delivery_Sheet"),
+                    "Delivery/Shipment ID": str(item.get("Delivery_Sheet", "N/A")),
                     "Main Batch": item.get("Main_Batch"),
                     "Color": item.get("Color"), "Fabric Type": item.get("Fabric_Type"),
                     "Roll No": item.get("Roll_No"), "Lot Batch": item.get("Main_Batch"),
@@ -142,19 +151,25 @@ def extract_ocean_lanka_ai(raw_text, file_name):
         except: pass
     return rows
 
-# --- 5. SIDEBAR & FILE UPLOAD ---
+# --- 6. SIDEBAR & FILE UPLOAD ---
 with st.sidebar:
     if lottie_scanning:
         st_lottie(lottie_scanning, height=150, key="side_anim")
     st.header("Control Panel")
     factory_type = st.radio("Select Source Factory:", ["SOUTH ASIA", "OCEAN LANKA"])
-    if st.button("Clear All Data"):
-        st.rerun()
+    
+    st.markdown("---")
+    if st.button("🔄 Clear & Reset System", use_container_width=True):
+        reset_system()
+
+if 'uploader_key' not in st.session_state:
+    st.session_state.uploader_key = 0
 
 st.subheader(f"Upload {factory_type} Packing Lists (PDF)")
-uploaded_files = st.file_uploader("Upload files", type=["pdf"], accept_multiple_files=True, label_visibility="collapsed")
+uploaded_files = st.file_uploader("Upload files", type=["pdf"], accept_multiple_files=True, 
+                                  key=f"up_{st.session_state.uploader_key}", label_visibility="collapsed")
 
-# --- 6. PROCESSING & VERIFICATION ---
+# --- 7. PROCESSING & SHIPMENT WISE VERIFICATION ---
 if uploaded_files:
     all_data = []
     with st.status("Gemini 3 Flash Processing...", expanded=True) as status:
@@ -165,38 +180,45 @@ if uploaded_files:
                     all_data.extend(extract_south_asia(full_text, file.name))
                 else:
                     all_data.extend(extract_ocean_lanka_ai(full_text, file.name))
-        status.update(label="Analysis Completed!", state="complete", expanded=False)
+        status.update(label="Analysis Completed Successfully!", state="complete", expanded=False)
 
     if all_data:
         df = pd.DataFrame(all_data)
         
-        # --- NEW: VERIFICATION DASHBOARD ---
-        st.markdown("### 📊 Data Verification Dashboard")
+        st.markdown("### 📊 Shipment Wise Verification")
         
-        # Summary Metrics
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Rolls", len(df))
-        m2.metric("Total Weight (Kg)", f"{df['Net Weight (Kg)'].sum():.2f}")
-        m3.metric("Total Length (yd)", f"{df['Net Length (yd)'].sum():.2f}")
+        # Shipment IDs අනුව දත්ත වෙන් කිරීම
+        shipment_ids = df['Delivery/Shipment ID'].unique()
         
-        # Data Integrity Check
-        missing = df.isnull().sum().sum()
-        if missing == 0:
-            m4.success("✅ Integrity: 100%")
-        else:
-            m4.warning(f"⚠️ Missing Values: {missing}")
-
-        # Batch-wise Summary Table
-        with st.expander("🔍 View Batch-wise Summary (Cross-check with PDF)"):
-            summary_df = df.groupby(['Main Batch', 'Color']).agg({
-                'Roll No': 'count',
-                'Net Weight (Kg)': 'sum',
-                'Net Length (yd)': 'sum'
-            }).rename(columns={'Roll No': 'Roll Count'})
-            st.dataframe(summary_df, use_container_width=True)
+        for s_id in shipment_ids:
+            ship_df = df[df['Delivery/Shipment ID'] == s_id]
+            
+            # Shipment Card
+            st.markdown(f"""
+                <div class='shipment-card'>
+                    <h3 style='margin:0; color: #4ecca3;'>📦 Shipment ID: {s_id}</h3>
+                    <p style='margin:0; opacity: 0.8;'>Files: {", ".join(ship_df['File'].unique())}</p>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            # Metrics
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total Rolls", len(ship_df))
+            c2.metric("Total Weight (Kg)", f"{ship_df['Net Weight (Kg)'].sum():.2f}")
+            c3.metric("Total Length (yd)", f"{ship_df['Net Length (yd)'].sum():.2f}")
+            
+            # Summary Table per Shipment
+            with st.expander(f"🔍 View Batch Summary for {s_id}"):
+                summary = ship_df.groupby(['Main Batch', 'Color']).agg({
+                    'Roll No': 'count',
+                    'Net Weight (Kg)': 'sum',
+                    'Net Length (yd)': 'sum'
+                }).rename(columns={'Roll No': 'Roll Count'})
+                st.dataframe(summary, use_container_width=True)
+            st.markdown("<br>", unsafe_allow_html=True)
 
         st.markdown("---")
-        st.markdown("### 📝 Full Data Preview")
+        st.markdown("### 📝 Full Raw Data Preview")
         st.dataframe(df, use_container_width=True)
 
         # Excel Export
@@ -207,13 +229,13 @@ if uploaded_files:
         st.download_button(
             label="📥 Download Verified Excel Report",
             data=output.getvalue(),
-            file_name=f"{factory_type}_Verified_Report.xlsx",
+            file_name=f"Verified_Report_{factory_type}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary"
         )
         st.balloons()
     else:
-        st.warning("No data found. Please check your PDF or Factory selection.")
+        st.warning("දත්ත හඳුනාගත නොහැකි විය. කරුණාකර නිවැරදි Factory එක තෝරා ඇත්දැයි බලන්න.")
 
-# --- 7. FOOTER ---
-st.markdown("<br><br><hr><center style='opacity: 0.6;'>Developed by <b>Ishanka Madusanka</b> | Built for Efficiency 2026</center>", unsafe_allow_html=True)
+# --- 8. FOOTER ---
+st.markdown("<br><br><hr><center style='opacity: 0.6;'>Developed by <b>Ishanka Madusanka</b> | 2026 AI Edition</center>", unsafe_allow_html=True)
