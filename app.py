@@ -7,9 +7,8 @@ import google.generativeai as genai
 import json
 
 # --- 1. පිටුවේ මූලික සැකසුම් සහ LOGO ---
-st.set_page_config(page_title="Textile Data Extractor Pro", layout="wide")
+st.set_page_config(page_title="Textile Data Extractor Pro 2026", layout="wide")
 
-# GitHub වෙතින් සෘජුවම Logo එක ලබාගන්නා Link එක
 LOGO_URL = "https://raw.githubusercontent.com/Ishanka-M/Doc_Reader/main/logo.png"
 
 col1, col2 = st.columns([1, 6])
@@ -19,23 +18,33 @@ with col1:
     except:
         st.write("Logo Loading...")
 with col2:
-    st.title("Bulk Textile Packing List Extractor")
+    st.title("Bulk Textile Packing List Extractor (Gemini 3 Powered)")
 
 st.markdown("---")
 
-# --- 2. API KEY ROTATION LOGIC (Secrets වල Keys 7ක් ඇති බව උපකල්පනය කරයි) ---
+# --- 2. API KEY ROTATION LOGIC ---
 API_KEYS = st.secrets.get("GEMINI_KEYS", [])
 
 def get_ai_response(prompt):
-    """Keys ලැයිස්තුව මාරු කරමින් සාර්ථක ප්‍රතිචාරයක් ලැබෙන තෙක් උත්සාහ කරයි"""
+    """Gemini 3 Pro/Flash මාදිලි භාවිතයෙන් Keys මාරු කරමින් දත්ත ලබා ගනී"""
     for key in API_KEYS:
         try:
             genai.configure(api_key=key)
-            model = genai.GenerativeModel('gemini-1.5-flash-latest')
+            
+            # 2026 නවතම Gemini 3 Flash මාදිලිය භාවිතා කිරීම
+            # මෙම මාදිලිය Agentic coding සහ Multimodal reasoning සඳහා ඉතා දියුණුයි
+            model = genai.GenerativeModel(
+                model_name='gemini-3-flash-preview',
+                generation_config={
+                    "response_mime_type": "application/json", # කෙලින්ම JSON ලබාගැනීමට
+                }
+            )
+            
+            # දත්ත නිස්සාරණය සඳහා Minimal thinking භාවිතා කිරීම (වේගය වැඩි කිරීමට)
             response = model.generate_content(prompt)
             return response.text
         except Exception as e:
-            # Limit එක ඉවර නම් ඊළඟ Key එකට මාරු වේ
+            # එක් Key එකක් Fail වුවහොත් ඊළඟ එකට මාරු වීම
             continue
     return None
 
@@ -69,40 +78,49 @@ def extract_south_asia(text, file_name):
         })
     return rows
 
-# --- 4. OCEAN LANKA EXTRACTION (GEMINI AI) ---
+# --- 4. OCEAN LANKA EXTRACTION (GEMINI 3 AI) ---
 def extract_ocean_lanka_ai(raw_text, file_name):
+    # Gemini 3 සඳහා Prompt එක (Thinking signatures වලට ගැලපෙන සේ)
     prompt = f"""
-    Extract data from this Ocean Lanka Packing List text. Return ONLY a valid JSON list.
-    - Delivery_Sheet: Found near 'Delivery Sheet No.' (e.g. T54090)
-    - Fabric_Type: Found near 'Fabric Type'
-    - Main_Batch: Found near 'Batch No'
-    - Color: COMBINE 'Our Colour No.' and 'Heat Setting' fields.
-    - Table: Extract Roll No, Net Length, Net Weight.
+    Analyze the following Ocean Lanka Packing List text. 
+    Return a JSON list of objects containing the following fields:
+    - Delivery_Sheet: (e.g. T54090)
+    - Fabric_Type: Full description
+    - Main_Batch: Batch Number
+    - Color: Combine 'Our Colour No.' and 'Heat Setting' into one string
+    - Roll_No: R/No
+    - Net_Weight: (Kg)
+    - Net_Length: (yd)
     
-    Text: {raw_text}
+    Raw Text: 
+    {raw_text}
     """
     
     ai_res = get_ai_response(prompt)
     rows = []
+    
     if ai_res:
         try:
-            clean_json = ai_res.strip().replace("```json", "").replace("```", "")
-            data = json.loads(clean_json)
+            # Gemini 3 'application/json' MIME type එක භාවිතා කරන නිසා සෘජුවම parse කළ හැක
+            data = json.loads(ai_res)
+            # දත්ත ලැයිස්තුවක් නොවන්නේ නම් එය ලැයිස්තුවක් බවට පත් කිරීම
+            if isinstance(data, dict) and "table" in data: data = data["table"]
+            
             for item in data:
                 rows.append({
                     "Factory Source": "OCEAN LANKA",
                     "File Name": file_name,
-                    "Delivery Sheet / Shipment ID": item.get("Delivery_Sheet"),
-                    "Main Batch No": item.get("Main_Batch"),
-                    "Color": item.get("Color"),
-                    "Fabric Type": item.get("Fabric_Type"),
-                    "Roll / R No": item.get("Roll_No"),
-                    "Lot Batch No": item.get("Main_Batch"),
-                    "Net Weight (Kg)": item.get("Net_Weight"),
-                    "Net Length (yd)": item.get("Net_Length")
+                    "Delivery Sheet / Shipment ID": item.get("Delivery_Sheet", "N/A"),
+                    "Main Batch No": item.get("Main_Batch", "N/A"),
+                    "Color": item.get("Color", "N/A"),
+                    "Fabric Type": item.get("Fabric_Type", "N/A"),
+                    "Roll / R No": item.get("Roll_No", "N/A"),
+                    "Lot Batch No": item.get("Main_Batch", "N/A"),
+                    "Net Weight (Kg)": item.get("Net_Weight", 0),
+                    "Net Length (yd)": item.get("Net_Length", 0)
                 })
-        except:
-            pass
+        except Exception as e:
+            st.error(f"Error parsing AI response: {e}")
     return rows
 
 # --- 5. UI - SELECT FACTORY & UPLOAD ---
@@ -117,15 +135,15 @@ uploaded_files = st.file_uploader(
     key=f"uploader_{st.session_state.uploader_key}"
 )
 
-# Reset Button
 if st.button("Reset All"):
     st.session_state.uploader_key += 1
     st.rerun()
 
 # --- 6. PROCESSING & DOWNLOAD ---
+
 if uploaded_files:
     all_data = []
-    with st.spinner("දත්ත කියවමින් පවතී..."):
+    with st.spinner(f"Gemini 3 Flash මඟින් {factory_type} දත්ත විශ්ලේෂණය කරයි..."):
         for file in uploaded_files:
             with pdfplumber.open(file) as pdf:
                 full_text = ""
@@ -156,4 +174,4 @@ if uploaded_files:
 
 # --- 7. FOOTER ---
 st.markdown("---")
-st.markdown("<div style='text-align: center; color: gray;'>Developed by <b>Ishanka Madusanka</b></div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: gray;'>Developed by <b>Ishanka Madusanka</b> | Powered by Gemini 3 Flash</div>", unsafe_allow_html=True)
