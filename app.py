@@ -52,15 +52,15 @@ def extract_south_asia(text, file_name):
         })
     return rows
 
-# 4. Ocean Lanka Extraction Logic (updated for requested fields)
+# 4. Ocean Lanka Extraction Logic (improved version)
 def extract_ocean_lanka(text, file_name, pdf_pages=None):
     """
     Ocean Lanka PDF වලින් පහත ක්ෂේත්‍ර උකහා ගනී:
     - Delivery Sheet No.
     - Fabric Type
-    - Batch No.
-    - Our Colour No.
-    - R/No, Net Length, Net Weight (වගුවෙන්)
+    - Batch No. (each row)
+    - Our Colour No. (each row)
+    - R/No, Net Length, Net Weight
     """
     rows = []
     
@@ -72,62 +72,78 @@ def extract_ocean_lanka(text, file_name, pdf_pages=None):
     delivery_sheet = extract_field(r"Delivery\s*Sheet\s*No\.?\s*[:.]?\s*([A-Z0-9\-]+)", text, re.IGNORECASE)
     fabric_type    = extract_field(r"Fabric\s*Type\s*[:.]?\s*(.*?)(?=\n\s*\n|\n\s*[A-Z]|$)", text, re.DOTALL | re.IGNORECASE)
     
-    # ---------- 2. වගු දත්ත නිස්සාරණය (pdfplumber භාවිතයෙන්) ----------
+    # ---------- 2. pdfplumber භාවිතයෙන් වගු දත්ත ලබා ගැනීම ----------
     if pdf_pages:
         for page in pdf_pages:
-            tables = page.extract_tables()
+            # table extraction settings වැඩිදියුණු කිරීම
+            tables = page.extract_tables({
+                "vertical_strategy": "lines", 
+                "horizontal_strategy": "lines",
+                "snap_tolerance": 3
+            })
             for table in tables:
-                # බොහෝ විට පළමු වගුව අවශ්‍ය වේ
                 for row in table:
-                    # අවම වශයෙන් තීරු 7ක් තිබිය යුතුය (R/No, Length, Weight, Size/Width, No of Pcs, Gross Weight, Dyeing and Finishing)
-                    if row and len(row) >= 7:
-                        roll_cell = str(row[0]).strip()
-                        # පළමු තීරුව රෝල් අංකයද? (ඉලක්කම් පමණක්)
-                        if re.match(r'^\d+$', roll_cell):
-                            length_cell = str(row[1]).strip().replace(',', '.')
-                            weight_cell = str(row[2]).strip().replace(',', '.')
-                            finishing_cell = str(row[6]).strip() if row[6] else ""  # Dyeing and Finishing column
-                            
-                            try:
-                                length_val = float(length_cell)
-                                weight_val = float(weight_cell)
-                                
-                                # ---------- 3. Dyeing and Finishing column එකෙන් Batch No, Colour No උකහා ගැනීම ----------
-                                batch_no = "N/A"
-                                colour_no = "N/A"
-                                
-                                # Batch No හඳුනාගැනීම (උදා: "Batch No. PAB45980P")
-                                bn_match = re.search(r"Batch\s*No\.?\s*[:.]?\s*([A-Z0-9\-]+)", finishing_cell, re.IGNORECASE)
-                                if bn_match:
-                                    batch_no = bn_match.group(1)
-                                
-                                # Our Colour No හඳුනාගැනීම (උදා: "Our Colour No. VS26164-01 C004 VS WHITE")
-                                cn_match = re.search(r"(?:Our\s*)?Colour\s*No\.?\s*[:.]?\s*(.*?)(?=\s*(?:Heat\s*Setting|$))", finishing_cell, re.IGNORECASE)
-                                if cn_match:
-                                    colour_no = cn_match.group(1).strip()
-                                
-                                # පේළිය DataFrame එකට එකතු කිරීම
-                                rows.append({
-                                    "Factory Source": "OCEAN LANKA",
-                                    "File Name": file_name,
-                                    "Delivery Sheet / Shipment ID": delivery_sheet,
-                                    "Main Batch No": batch_no,
-                                    "Color": colour_no,
-                                    "Fabric Type": fabric_type,
-                                    "Roll / R No": roll_cell,
-                                    "Lot Batch No": batch_no,  # Lot Batch No නොමැති නම් Main Batch No යොදන්න
-                                    "Net Weight (Kg)": weight_val,
-                                    "Net Length (yd)": length_val
-                                })
-                            except ValueError:
-                                continue  # සංඛ්‍යා පරිවර්තනය අසාර්ථක වුවහොත් මග හරින්න
+                    if not row or len(row) < 3:
+                        continue
+                    
+                    # පළමු තීරුව රෝල් අංකයද? (ඉලක්කම් පමණක්)
+                    roll_cell = str(row[0]).strip() if row[0] else ""
+                    if not roll_cell.isdigit():
+                        continue
+                    
+                    # දිග සහ බර තීරු (දෙවන සහ තෙවන තීරු)
+                    length_cell = str(row[1]).strip().replace(',', '.') if len(row) > 1 and row[1] else "0"
+                    weight_cell = str(row[2]).strip().replace(',', '.') if len(row) > 2 and row[2] else "0"
+                    
+                    try:
+                        length_val = float(length_cell)
+                        weight_val = float(weight_cell)
+                    except ValueError:
+                        continue
+                    
+                    # ---------- 3. Dyeing and Finishing තීරුව සොයා ගැනීම ----------
+                    # සාමාන්‍යයෙන් 7 වන තීරුවේ (index 6) ඇත, නමුත් සමහර විට 5 හෝ 6 විය හැක
+                    finishing_cell = ""
+                    for idx in [6, 5, 4]:  # 7th, 6th, 5th column
+                        if len(row) > idx and row[idx]:
+                            finishing_cell = str(row[idx]).strip()
+                            if finishing_cell:
+                                break
+                    
+                    # finishing_cell එකෙන් Batch No සහ Colour No උකහා ගැනීම
+                    batch_no = "N/A"
+                    colour_no = "N/A"
+                    
+                    if finishing_cell:
+                        # Batch No හඳුනාගැනීම (උදා: "Batch No. PAB45980P")
+                        bn_match = re.search(r"Batch\s*No\.?\s*[:.]?\s*([A-Z0-9\-]+)", finishing_cell, re.IGNORECASE)
+                        if bn_match:
+                            batch_no = bn_match.group(1)
+                        
+                        # Our Colour No හඳුනාගැනීම (උදා: "Our Colour No. VS26164-01 C004 VS WHITE")
+                        cn_match = re.search(r"(?:Our\s*)?Colour\s*No\.?\s*[:.]?\s*(.*?)(?=\s*(?:Heat\s*Setting|$))", finishing_cell, re.IGNORECASE)
+                        if cn_match:
+                            colour_no = cn_match.group(1).strip()
+                    
+                    # පේළිය DataFrame එකට එකතු කිරීම
+                    rows.append({
+                        "Factory Source": "OCEAN LANKA",
+                        "File Name": file_name,
+                        "Delivery Sheet / Shipment ID": delivery_sheet,
+                        "Main Batch No": batch_no,
+                        "Color": colour_no,
+                        "Fabric Type": fabric_type,
+                        "Roll / R No": roll_cell,
+                        "Lot Batch No": batch_no,  # Lot Batch No නොමැති නම් Main Batch No යොදන්න
+                        "Net Weight (Kg)": weight_val,
+                        "Net Length (yd)": length_val
+                    })
     
     # ---------- 4. විකල්ප: pdfplumber අසාර්ථක වුවහොත් regex මගින් උත්සාහ කරන්න ----------
     if not rows:
         # සරල රේඛීය පාදක ක්‍රමයක් (අවශ්‍ය නම් පමණක්)
         lines = text.split('\n')
         for line in lines:
-            # රෝල් අංකය, දිග, බර යන අගයන් එක පේළියක තිබේදැයි පරීක්ෂා කරන්න
             parts = line.strip().split()
             if len(parts) >= 3 and parts[0].isdigit():
                 try:
