@@ -6,12 +6,13 @@ import re
 import google.generativeai as genai
 import json
 import requests
+import time
 from streamlit_lottie import st_lottie
 
 # --- 1. පද්ධතියේ මූලික සැකසුම් ---
 st.set_page_config(page_title="Textile AI Extractor Pro 2026", layout="wide")
 
-# --- CUSTOM CSS (Premium UI & Shipment Box Styling) ---
+# --- CUSTOM CSS (Premium UI) ---
 st.markdown("""
     <style>
     .stApp {
@@ -55,10 +56,14 @@ st.markdown("""
     [data-testid="stMetricValue"] {
         color: #4ecca3 !important;
     }
+    /* Progress Bar Color */
+    .stProgress > div > div > div > div {
+        background-color: #4ecca3;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# Animation loading
+# Animation loading function
 def load_lottieurl(url: str):
     try:
         r = requests.get(url, timeout=5)
@@ -66,7 +71,9 @@ def load_lottieurl(url: str):
     except:
         return None
 
+# Load Animations
 lottie_scanning = load_lottieurl("https://lottie.host/7e60655d-3652-4752-9f6e-71c1b1207907/68VjI2Fv6B.json")
+lottie_success = load_lottieurl("https://lottie.host/31201777-743a-4460-9118-20815152866c/D6K7F9j9D9.json")
 
 # --- 2. RESET FUNCTION ---
 def reset_system():
@@ -169,31 +176,50 @@ st.subheader(f"Upload {factory_type} Packing Lists (PDF)")
 uploaded_files = st.file_uploader("Upload files", type=["pdf"], accept_multiple_files=True, 
                                   key=f"up_{st.session_state.uploader_key}", label_visibility="collapsed")
 
-# --- 7. PROCESSING & SHIPMENT WISE VERIFICATION ---
+# --- 7. PROCESSING WITH PROGRESS BAR & SUCCESS ANIMATION ---
 if uploaded_files:
     all_data = []
+    
+    # Progress Bar UI
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    total_files = len(uploaded_files)
+
     with st.status("Gemini 3 Flash Processing...", expanded=True) as status:
-        for file in uploaded_files:
+        for idx, file in enumerate(uploaded_files):
+            # Update Progress
+            percent_complete = (idx + 1) / total_files
+            progress_bar.progress(percent_complete)
+            status_text.text(f"Processing File {idx+1} of {total_files}: {file.name}")
+            
             with pdfplumber.open(file) as pdf:
                 full_text = "\n".join([p.extract_text() or "" for p in pdf.pages])
                 if factory_type == "SOUTH ASIA":
                     all_data.extend(extract_south_asia(full_text, file.name))
                 else:
                     all_data.extend(extract_ocean_lanka_ai(full_text, file.name))
+        
         status.update(label="Analysis Completed Successfully!", state="complete", expanded=False)
+        status_text.empty()
+        progress_bar.empty()
 
     if all_data:
+        # --- SUCCESS ANIMATION & TOAST ---
+        col_s1, col_s2, col_s3 = st.columns([2, 1, 2])
+        with col_s2:
+            if lottie_success:
+                st_lottie(lottie_success, height=180, key="success_check", loop=False)
+        
+        st.toast("Success! Data extracted and verified.", icon='✅')
+        time.sleep(1) # Animation එක බැලීමට සුළු වෙලාවක් ලබා දීම
+
         df = pd.DataFrame(all_data)
         
         st.markdown("### 📊 Shipment Wise Verification")
-        
-        # Shipment IDs අනුව දත්ත වෙන් කිරීම
         shipment_ids = df['Delivery/Shipment ID'].unique()
         
         for s_id in shipment_ids:
             ship_df = df[df['Delivery/Shipment ID'] == s_id]
-            
-            # Shipment Card
             st.markdown(f"""
                 <div class='shipment-card'>
                     <h3 style='margin:0; color: #4ecca3;'>📦 Shipment ID: {s_id}</h3>
@@ -201,13 +227,11 @@ if uploaded_files:
                 </div>
             """, unsafe_allow_html=True)
             
-            # Metrics
             c1, c2, c3 = st.columns(3)
             c1.metric("Total Rolls", len(ship_df))
             c2.metric("Total Weight (Kg)", f"{ship_df['Net Weight (Kg)'].sum():.2f}")
             c3.metric("Total Length (yd)", f"{ship_df['Net Length (yd)'].sum():.2f}")
             
-            # Summary Table per Shipment
             with st.expander(f"🔍 View Batch Summary for {s_id}"):
                 summary = ship_df.groupby(['Main Batch', 'Color']).agg({
                     'Roll No': 'count',
@@ -233,7 +257,6 @@ if uploaded_files:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary"
         )
-        st.balloons()
     else:
         st.warning("දත්ත හඳුනාගත නොහැකි විය. කරුණාකර නිවැරදි Factory එක තෝරා ඇත්දැයි බලන්න.")
 
