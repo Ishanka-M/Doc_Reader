@@ -20,10 +20,10 @@ def reset_app():
     st.session_state.uploader_key += 1
     st.rerun()
 
-# 3. South Asia Extraction Logic
+# 3. South Asia Extraction Logic (existing)
 def extract_south_asia(text, file_name):
     rows = []
-    # Header දත්ත හඳුනා ගැනීම [cite: 9, 10]
+    # Header දත්ත හඳුනා ගැනීම
     ship_id = re.search(r"Shipment Id[\s\n\",:]+(\d+)", text)
     batch_main = re.search(r"Batch No[\s\n\",:]+(\d+)", text)
     color = re.search(r"Color Name & No[\s\n\",:]+(.*?)\n", text)
@@ -34,7 +34,7 @@ def extract_south_asia(text, file_name):
     color_info = color.group(1).strip().replace('"', '').replace(':', '').strip() if color else "N/A"
     fabric_type = f_type.group(1).strip().replace('"', '').replace(':', '').strip() if f_type else "N/A"
 
-    # වගුවේ දත්ත (Roll #, Lot Batch No, Kg, yd) [cite: 15]
+    # වගුවේ දත්ත (Roll #, Lot Batch No, Kg, yd)
     pattern = re.compile(r"(\d{7})\s+([\d\-*]+)\s+(\d+\.\d+)\s+(\d+\.\d+)")
     matches = pattern.findall(text)
     for m in matches:
@@ -52,39 +52,53 @@ def extract_south_asia(text, file_name):
         })
     return rows
 
-# 4. Ocean Lanka Extraction Logic
+# 4. Ocean Lanka Extraction Logic (updated for requested fields)
 def extract_ocean_lanka(text, file_name):
     rows = []
     
-    # Delivery Sheet No [cite: 24]
-    ds_search = re.search(r"Delivery Sheet No\.[\s\n\",]+([A-Z0-9]+)", text)
+    # Delivery Sheet No.
+    ds_search = re.search(r"Delivery Sheet No\.[\s\n\",:]*([A-Z0-9\-]+)", text, re.IGNORECASE)
     delivery_sheet = ds_search.group(1) if ds_search else "N/A"
     
-    # Fabric Type [cite: 21]
-    ft_search = re.search(r"Fabric Type[\s\n\",]+(.*?)(?=\n\n|\"|BPF|$)", text, re.DOTALL)
+    # Fabric Type (multi-line possible)
+    ft_search = re.search(r"Fabric Type[\s\n\",:]+(.*?)(?=\n\n|\"|BPF|Our Colour|Batch|$)", text, re.DOTALL | re.IGNORECASE)
     fabric_type = ft_search.group(1).strip().replace('\n', ' ') if ft_search else "N/A"
 
-    # Batch No [cite: 35]
-    bn_search = re.search(r"Batch No\s+([A-Z0-9]+)", text)
+    # Batch No
+    bn_search = re.search(r"Batch No[\s\n\",:]+([A-Z0-9\-]+)", text, re.IGNORECASE)
     batch_no = bn_search.group(1) if bn_search else "N/A"
     
-    # --- Colour No සහ Heat Setting එකට එකතු කිරීම  ---
-    # ඔබ ඉල්ලා සිටි පරිදි: VS26164-01 C004 VS WHITE 95D1/LARGE DOTS
-    cn_match = re.search(r"Our Colour No\.\s*\n\s*\"?([^\n\"]+)\"?", text)
-    hs_match = re.search(r"Heat Setting\s*\n\s*\"?([^\n\"]+)\"?", text)
+    # Our Colour No (with possible surrounding quotes)
+    cn_search = re.search(r"Our Colour No\.?\s*\n?\s*\"?([^\n\"]+)\"?", text, re.IGNORECASE)
+    colour_no = cn_search.group(1).strip() if cn_search else "N/A"
     
-    color_part = cn_match.group(1).strip() if cn_match else ""
-    heat_part = hs_match.group(1).strip() if hs_match else ""
-    combined_color = f"{color_part} {heat_part}".strip() if color_part or heat_part else "N/A"
-
-    # 📊 Ocean Lanka වගු දත්ත හඳුනාගැනීම (විශේෂිත Regex රටාව) 
-    # රටාව: , "RollNo" , "Length" , "Weight"
-    table_pattern = re.compile(r",\s*\"(\d+)\s*\"\s*,\s*\"([\d\.,\s]+)\"\s*,\s*\"([\d\.,\s]+)\"")
+    # Table data: R/No, Net Length, Net Weight
+    # Regex adapted to match typical Ocean Lanka table format
+    # Look for patterns like: "12345" , "123.45" , "67.89"
+    table_pattern = re.compile(r',\s*\"(\d+)\s*\"\s*,\s*\"([\d\.,\s]+)\"\s*,\s*\"([\d\.,\s]+)\"')
     matches = table_pattern.findall(text)
+    
+    # If no matches, try alternative pattern (for different PDF layouts)
+    if not matches:
+        # Alternative: lines with three comma-separated values
+        lines = text.split('\n')
+        for line in lines:
+            parts = line.strip().split(',')
+            if len(parts) >= 3:
+                # Try to extract roll, length, weight (may contain quotes)
+                roll_match = re.search(r'\"?(\d+)\"?', parts[0])
+                length_match = re.search(r'([\d\.]+)', parts[1].replace(',', '.'))
+                weight_match = re.search(r'([\d\.]+)', parts[2].replace(',', '.'))
+                if roll_match and length_match and weight_match:
+                    matches.append((
+                        roll_match.group(1),
+                        length_match.group(1),
+                        weight_match.group(1)
+                    ))
     
     for m in matches:
         roll_no = m[0].strip()
-        # කොමා වෙනුවට තිත් භාවිතා කර අගයන් පිරිසිදු කිරීම 
+        # Convert comma decimal separators to dots
         length_val = m[1].replace(',', '.').replace('\n', '').strip()
         weight_val = m[2].replace(',', '.').replace('\n', '').strip()
         
@@ -94,10 +108,10 @@ def extract_ocean_lanka(text, file_name):
                 "File Name": file_name,
                 "Delivery Sheet / Shipment ID": delivery_sheet,
                 "Main Batch No": batch_no,
-                "Color": combined_color,
+                "Color": colour_no,          # Our Colour No
                 "Fabric Type": fabric_type,
                 "Roll / R No": roll_no,
-                "Lot Batch No": batch_no,
+                "Lot Batch No": batch_no,    # Lot Batch No same as Main Batch No if not available separately
                 "Net Weight (Kg)": float(weight_val),
                 "Net Length (yd)": float(length_val)
             })
@@ -126,7 +140,6 @@ if uploaded_files:
             with pdfplumber.open(file) as pdf:
                 full_text = ""
                 for page in pdf.pages:
-                    # PDF හි ඇති පෙළ සහ වගු දත්ත නිවැරදිව ලබා ගැනීම [cite: 21, 25]
                     full_text += (page.extract_text() or "") + "\n"
                 
                 if factory_type == "SOUTH ASIA":
