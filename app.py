@@ -7,20 +7,18 @@ import re
 # 1. පිටුවේ මූලික සැකසුම්
 st.set_page_config(page_title="Textile Data Extractor", layout="wide")
 
-# GitHub Logo URL (ඔබේ GitHub ගිණුමේ ඇති ලාංඡනය)
+# GitHub Logo URL
 LOGO_URL = "https://raw.githubusercontent.com/Ishanka-M/Doc_Reader/main/logo.png"
 
 # Header කොටස
 col1, col2 = st.columns([1, 6])
 with col1:
-    try:
-        st.image(LOGO_URL, width=120)
-    except:
-        st.write("Logo Loading...")
+    try: st.image(LOGO_URL, width=120)
+    except: st.write("Logo Loading...")
 with col2:
     st.title("Bulk Textile Packing List Extractor")
 
-# 2. Reset Functionality (Session State භාවිතා කරමින්)
+# 2. Reset Functionality
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
@@ -31,7 +29,7 @@ def reset_app():
 # 3. South Asia Extraction Logic
 def extract_south_asia(text, file_name):
     rows = []
-    # Header දත්ත හඳුනා ගැනීම [cite: 1]
+    # Header දත්ත: Shipment Id, Batch No, Color, Fabric Type [cite: 9, 10]
     ship_id = re.search(r"Shipment Id[\s\n\",:]+(\d+)", text)
     batch_main = re.search(r"Batch No[\s\n\",:]+(\d+)", text)
     color = re.search(r"Color Name & No[\s\n\",:]+(.*?)\n", text)
@@ -42,7 +40,7 @@ def extract_south_asia(text, file_name):
     color_info = color.group(1).strip().replace('"', '') if color else "N/A"
     fabric_type = f_type.group(1).strip().replace('"', '') if f_type else "N/A"
 
-    # වගුවේ දත්ත (Roll #, Lot Batch No, Kg, yd) [cite: 1]
+    # වගුවේ දත්ත: Roll #, Lot Batch No, Kg, yd [cite: 15]
     pattern = re.compile(r"(\d{7})\s+([\d\-*]+)\s+(\d+\.\d+)\s+(\d+\.\d+)")
     matches = pattern.findall(text)
     for m in matches:
@@ -64,31 +62,28 @@ def extract_south_asia(text, file_name):
 def extract_ocean_lanka(text, file_name):
     rows = []
     
-    # Delivery Sheet No ලබා ගැනීම 
+    # Delivery Sheet No 
     ds_search = re.search(r"Delivery Sheet No\.[\s\n\",]+([A-Z0-9]+)", text)
     delivery_sheet = ds_search.group(1) if ds_search else "N/A"
     
-    # Fabric Type ලබා ගැනීම 
+    # Fabric Type 
     ft_search = re.search(r"Fabric Type[\s\n\",]+(.*?)(?=\n\n|\"|$)", text, re.DOTALL)
     fabric_type_raw = ft_search.group(1).strip() if ft_search else "N/A"
     fabric_type = fabric_type_raw.split('\n')[-1].replace('"', '').strip()
 
-    # Batch No ලබා ගැනීම 
+    # Batch No [cite: 35]
     bn_search = re.search(r"Batch No\s+([A-Z0-9]+)", text)
     batch_no = bn_search.group(1) if bn_search else "N/A"
     
-    # Our Colour No සහ Heat Setting එකට සම්බන්ධ කිරීම 
+    # Our Colour No [cite: 37] සහ Heat Setting [cite: 39] එකට සම්බන්ධ කිරීම
     cn_match = re.search(r"Our Colour No\.[\s\n\",]+(.*?)\nHeat Setting", text, re.DOTALL)
     hs_match = re.search(r"Heat Setting[\s\n\",]+(.*?)\n", text)
     
     color_val = cn_match.group(1).strip().replace('"', '').replace('\n', ' ') if cn_match else ""
     heat_val = hs_match.group(1).strip().replace('"', '') if hs_match else ""
-    
-    # ඔබට අවශ්‍ය පරිදි අගයන් දෙකම එකට පෙන්වීම
     final_color = f"{color_val} {heat_val}".strip() if color_val or heat_val else "N/A"
 
-    # වගුවේ දත්ත (R/ No, Net Length, Net Weight) 
-    # දත්ත අතර ඇති නව පේළි (\n) ඉවත් කර නිවැරදිව කියවීමට සකසා ඇත
+    # වගුවේ දත්ත  (R/ No, Net Length, Net Weight)
     table_pattern = re.compile(r",\s*\"(\d+)\s*\"\s*,\s*\"([\d\.,\s]+)\"\s*,\s*\"([\d\.,\s]+)\"")
     matches = table_pattern.findall(text)
     
@@ -120,17 +115,15 @@ st.markdown("---")
 factory_type = st.selectbox("ආයතනය තෝරන්න (Select Factory)", ["SOUTH ASIA", "OCEAN LANKA"])
 
 uploaded_files = st.file_uploader(
-    f"{factory_type} PDF ගොනු upload කරන්න", 
-    type=["pdf"], 
-    accept_multiple_files=True, 
-    key=f"uploader_{st.session_state.uploader_key}"
+    f"{factory_type} PDF ගොනු upload කරන්න", type=["pdf"], 
+    accept_multiple_files=True, key=f"uploader_{st.session_state.uploader_key}"
 )
 
 if st.button("Reset All"):
     reset_app()
 
 if uploaded_files:
-    all_extracted_data = []
+    all_data = []
     with st.spinner("දත්ත කියවමින් පවතී..."):
         for file in uploaded_files:
             with pdfplumber.open(file) as pdf:
@@ -139,34 +132,26 @@ if uploaded_files:
                     full_text += page.extract_text() + "\n"
                 
                 if factory_type == "SOUTH ASIA":
-                    all_extracted_data.extend(extract_south_asia(full_text, file.name))
-                elif factory_type == "OCEAN LANKA":
-                    all_extracted_data.extend(extract_ocean_lanka(full_text, file.name))
+                    all_data.extend(extract_south_asia(full_text, file.name))
+                else:
+                    all_data.extend(extract_ocean_lanka(full_text, file.name))
 
-    if all_extracted_data:
-        df = pd.DataFrame(all_extracted_data)
+    if all_data:
+        df = pd.DataFrame(all_data)
         st.success(f"ගොනු {len(uploaded_files)} සාර්ථකව කියවන ලදී.")
         st.dataframe(df, use_container_width=True)
 
-        # Excel Download පහසුකම
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
         
         st.download_button(
-            label="📥 Download Excel File",
-            data=output.getvalue(),
+            label="📥 Download Excel File", data=output.getvalue(),
             file_name=f"{factory_type}_Extracted_Data.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
         st.error("දත්ත හඳුනා ගැනීමට නොහැකි විය. කරුණාකර නිවැරදි ආයතනය තෝරා ඇත්දැයි පරීක්ෂා කරන්න.")
 
-# පාදකය (Footer)
 st.markdown("---")
-st.markdown(
-    "<div style='text-align: center; color: gray; font-size: 0.9em;'>"
-    "Developed by <b>Ishanka Madusanka</b>"
-    "</div>", 
-    unsafe_allow_html=True
-)
+st.markdown("<div style='text-align: center; color: gray;'>Developed by <b>Ishanka Madusanka</b></div>", unsafe_allow_html=True)
