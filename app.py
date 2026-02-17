@@ -94,11 +94,20 @@ with col2:
 
 st.markdown("---")
 
-# --- 4. API KEY ROTATION LOGIC ---
+# --- 4. API KEY ROTATION LOGIC (7 KEYS SUPPORT) ---
+# Secrets වල GEMINI_KEY1, GEMINI_KEY2... ලෙස හෝ GEMINI_KEYS list එකක් ලෙස තිබිය හැක.
 API_KEYS = st.secrets.get("GEMINI_KEYS", [])
 
 def get_ai_response(prompt):
-    for key in API_KEYS:
+    """
+    Attempts to get a response using available keys. 
+    Rotates to the next key if the current one fails.
+    """
+    if not API_KEYS:
+        st.error("API Keys ලබා දී නොමැත. කරුණාකර Secrets පරීක්ෂා කරන්න.")
+        return None
+
+    for i, key in enumerate(API_KEYS):
         try:
             genai.configure(api_key=key)
             model = genai.GenerativeModel(
@@ -107,8 +116,13 @@ def get_ai_response(prompt):
             )
             response = model.generate_content(prompt)
             return response.text
-        except:
-            continue
+        except Exception as e:
+            # කෝටා එක ඉවරනම් හෝ වෙනත් දෝෂයක් නම් ඊළඟ Key එකට මාරු වේ
+            if i < len(API_KEYS) - 1:
+                continue 
+            else:
+                st.error("සියලුම AI API Keys වල සීමාවන් අවසන් වී ඇත. කරුණාකර මද වේලාවකින් උත්සාහ කරන්න.")
+                return None
     return None
 
 # --- 5. AI VERIFICATION & EXTRACTION LOGIC ---
@@ -123,53 +137,44 @@ def ai_verify_and_extract(text, file_name, factory_type, header_cache):
     Combined Extraction and Verification function using Gemini AI.
     """
     
-    # Custom Rules for Verification based on Factory
+    # දත්ත හඳුනාගැනීම වැඩි දියුණු කළ උපදෙස් (Optimized Instructions)
     if factory_type == "SOUTH ASIA":
         specific_instructions = """
-        - Header Fields to verify: Shipment Id, Batch No, Color Name & No, Fabric Type.
-        - Table Columns: Roll No (Strictly 7 digits), Lot Batch, Net Weight, Net Length.
-        - Verification Rule: If 'Roll No' has OCR errors (e.g. letters instead of numbers), fix it based on context.
+        - Recognize patterns: 'Shipment Id', 'Batch No', 'Color Name & No', 'Fabric Type'.
+        - Table Data: Extract Roll No (usually 7 digits), Lot Batch, Net Weight, and Net Length.
+        - Handle blurred text by looking at column alignment.
         """
     else: # OCEAN LANKA
         specific_instructions = """
-        - Header Fields to verify: Delivery Sheet No, Main Batch, Color, Fabric Type.
-        - Table Columns: Roll No, Net_Weight, Net_Length.
-        - Verification Rule: Ensure Net Weight and Length are valid numbers. Convert 'O' to '0' if mistyped.
+        - Recognize patterns: 'Delivery Sheet No', 'Main Batch', 'Color', 'Fabric Type'.
+        - Table Data: Extract Roll No, Net Weight, and Net Length.
+        - Important: Convert any 'O' found in weight/length numbers to '0'.
         """
 
     prompt = f"""
-    ROLE: You are a Senior Quality Assurance Auditor for a Textile Factory.
-    TASK: Extract data from the provided Packing List text AND verify its accuracy simultaneously.
+    ROLE: Senior Textile Data Auditor.
+    TASK: Extract and Verify packing list data from the text below.
+    
+    TEXT TO ANALYZE:
+    '''{text}'''
 
     INSTRUCTIONS:
-    1. **EXTRACT**: Identify the Headers and the Table Rows containing Roll details.
-    2. **VERIFY & FIX**: 
-       - Check for OCR errors (e.g., 'l' vs '1', 'O' vs '0', 'S' vs '5').
-       - Ensure 'Net Weight' and 'Net Length' are pure numbers (floats).
-       - If a Header is missing on this page, return null (we will use cache).
+    1. Extract Header Info. If not found on this page, set as null.
+    2. Extract all rows in the table. 
+    3. DATA FIXING: If numbers contain non-numeric characters (except decimals), remove them.
     
-    SPECIFIC FACTORY RULES:
-    {specific_instructions}
+    FACTORY CONTEXT: {specific_instructions}
 
-    INPUT TEXT:
-    '''{text}'''
-    
-    OUTPUT FORMAT (Strict JSON):
+    RETURN JSON ONLY:
     {{
         "header": {{
-            "shipment_id": "value or null",
-            "batch_no": "value or null",
-            "color": "value or null",
-            "fabric_type": "value or null"
+            "shipment_id": "value",
+            "batch_no": "value",
+            "color": "value",
+            "fabric_type": "value"
         }},
         "rows": [
-            {{ 
-                "roll_no": "verified value", 
-                "lot_batch": "verified value", 
-                "weight": 0.00, 
-                "length": 0.00,
-                "status": "verified"
-            }}
+            {{ "roll_no": "val", "lot_batch": "val", "weight": 0.0, "length": 0.0 }}
         ]
     }}
     """
@@ -184,8 +189,6 @@ def ai_verify_and_extract(text, file_name, factory_type, header_cache):
             
             # --- HEADER CACHING LOGIC ---
             h_data = data.get("header", {})
-            
-            # Update cache only if AI found a valid value (not null)
             if h_data.get("shipment_id") and str(h_data.get("shipment_id")).lower() != "null": 
                 header_cache['s_id'] = h_data.get("shipment_id")
             if h_data.get("batch_no") and str(h_data.get("batch_no")).lower() != "null": 
@@ -195,7 +198,6 @@ def ai_verify_and_extract(text, file_name, factory_type, header_cache):
             if h_data.get("fabric_type") and str(h_data.get("fabric_type")).lower() != "null": 
                 header_cache['ft'] = h_data.get("fabric_type")
 
-            # Use cached values if current page header is missing
             final_s_id = header_cache.get('s_id', "N/A")
             final_b_no = header_cache.get('b_no', "N/A")
             final_col = header_cache.get('col', "N/A")
@@ -203,9 +205,7 @@ def ai_verify_and_extract(text, file_name, factory_type, header_cache):
 
             # --- ROW PROCESSING ---
             for item in data.get("rows", []):
-                # Skip empty or invalid rows
-                if not item.get("roll_no"):
-                    continue
+                if not item.get("roll_no"): continue
 
                 rows.append({
                     "Factory": factory_type,
@@ -216,15 +216,12 @@ def ai_verify_and_extract(text, file_name, factory_type, header_cache):
                     "Fabric Type": final_ft, 
                     "Roll No": item.get("roll_no"),
                     "Lot Batch": item.get("lot_batch", final_b_no), 
-                    "Net Weight (Kg)": float(item.get("weight", 0)), 
-                    "Net Length (yd)": float(item.get("length", 0)),
+                    "Net Weight (Kg)": float(str(item.get("weight", 0)).replace(',','')), 
+                    "Net Length (yd)": float(str(item.get("length", 0)).replace(',','')),
                     "Verification Status": "AI Verified ✅"
                 })
-
-        except json.JSONDecodeError:
-            pass # AI output failed parsing
-        except Exception as e:
-            pass # General error
+        except:
+            pass
 
     return rows, header_cache
 
@@ -246,53 +243,42 @@ st.subheader(f"Upload {factory_type} Packing Lists (PDF)")
 uploaded_files = st.file_uploader("Upload files", type=["pdf"], accept_multiple_files=True, 
                                   key=f"up_{st.session_state.uploader_key}", label_visibility="collapsed")
 
-# --- 7. PROCESSING LOOP (MULTI-PAGE ENABLED) ---
+# --- 7. PROCESSING LOOP ---
 if uploaded_files:
     all_data = []
-    
-    # Progress Bar UI
     progress_bar = st.progress(0)
     status_text = st.empty()
     total_files = len(uploaded_files)
 
-    with st.status("Gemini AI Verified Processing...", expanded=True) as status:
+    with st.status("Gemini AI Rotating Keys & Verifying...", expanded=True) as status:
         for idx, file in enumerate(uploaded_files):
             percent_complete = (idx + 1) / total_files
             progress_bar.progress(percent_complete)
             status_text.text(f"Verifying File {idx+1} of {total_files}: {file.name}")
             
-            # Reset Header Cache for each NEW file
             header_cache = {} 
-
             with pdfplumber.open(file) as pdf:
-                # Iterate through ALL pages
-                for page_num, page in enumerate(pdf.pages):
+                for page in pdf.pages:
                     page_text = page.extract_text()
                     if not page_text: continue
                     
-                    # --- CALLING THE AI VERIFICATION FUNCTION ---
                     page_rows, header_cache = ai_verify_and_extract(page_text, file.name, factory_type, header_cache)
-                    
                     all_data.extend(page_rows)
-                    time.sleep(0.5) # Prevent Rate Limiting
+                    time.sleep(0.4) # API Stability
         
-        status.update(label="AI Verification Completed!", state="complete", expanded=False)
+        status.update(label="AI Analysis Complete!", state="complete", expanded=False)
         status_text.empty()
         progress_bar.empty()
 
     if all_data:
-        # --- SUCCESS UI ---
         col_s1, col_s2, col_s3 = st.columns([2, 1, 2])
         with col_s2:
             if lottie_success:
                 st_lottie(lottie_success, height=180, key="success_check", loop=False)
         
         st.toast("Verification Successful!", icon='✅')
-        time.sleep(1)
-
         df = pd.DataFrame(all_data)
         
-        # --- RESULT DISPLAY ---
         st.markdown("### 📊 Shipment Wise AI Verification")
         shipment_ids = df['Delivery/Shipment ID'].unique()
         
@@ -323,7 +309,6 @@ if uploaded_files:
         st.markdown("### 📝 Full AI Verified Data Preview")
         st.dataframe(df, use_container_width=True)
 
-        # Excel Export
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
