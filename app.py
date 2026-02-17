@@ -56,7 +56,6 @@ st.markdown("""
     [data-testid="stMetricValue"] {
         color: #4ecca3 !important;
     }
-    /* Progress Bar Color */
     .stProgress > div > div > div > div {
         background-color: #4ecca3;
     }
@@ -103,7 +102,7 @@ def get_ai_response(prompt):
         try:
             genai.configure(api_key=key)
             model = genai.GenerativeModel(
-                model_name='gemini-2.0-flash', # Updated to latest flash model for speed
+                model_name='gemini-2.0-flash', 
                 generation_config={"response_mime_type": "application/json"}
             )
             response = model.generate_content(prompt)
@@ -112,44 +111,58 @@ def get_ai_response(prompt):
             continue
     return None
 
-# --- 5. EXTRACTION LOGIC (UPDATED FOR MULTI-PAGE) ---
+# --- 5. EXTRACTION LOGIC (UPDATED FOR MULTI-PAGE & GRID LAYOUT) ---
 def extract_south_asia(text, file_name, header_cache):
     rows = []
     
-    # Extract Headers using Regex
-    ship_id_match = re.search(r"Shipment Id[\s\n\",:]+(\d+)", text)
-    batch_main_match = re.search(r"Batch No[\s\n\",:]+(\d+)", text)
-    color_match = re.search(r"Color Name & No[\s\n\",:]+(.*?)\n", text)
-    f_type_match = re.search(r"Fabric Type[\s\n\",:]+(.*?)\n", text)
+    # --- 1. Header Extraction (Update Cache) ---
+    ship_id_match = re.search(r"Shipment Id[\s\n\",:]+(\d+)", text, re.IGNORECASE)
+    batch_main_match = re.search(r"Batch No[\s\n\",:]+(\d+)", text, re.IGNORECASE)
+    
+    # Regex improved to catch multi-line fabric/color descriptions
+    color_match = re.search(r"Color Name & No[\s\n\",:]+(.*?)(?=\n|PO Season)", text, re.IGNORECASE)
+    f_type_match = re.search(r"Fabric Type[\s\n\",:]+(.*?)(?=\n|Roll #|Location)", text, re.IGNORECASE | re.DOTALL)
 
-    # Update Header Cache if new values found, else use previous (continuation page)
     if ship_id_match: header_cache['s_id'] = ship_id_match.group(1)
     if batch_main_match: header_cache['b_no'] = batch_main_match.group(1)
     if color_match: header_cache['c_info'] = color_match.group(1).strip()
-    if f_type_match: header_cache['f_info'] = f_type_match.group(1).strip()
+    if f_type_match: header_cache['f_info'] = f_type_match.group(1).strip().replace('\n', ' ')
 
-    # Use cached values
+    # Use cached values (Fallback for pages 2, 3...)
     s_id = header_cache.get('s_id', "N/A")
     b_no = header_cache.get('b_no', "N/A")
     c_info = header_cache.get('c_info', "N/A")
     f_info = header_cache.get('f_info', "N/A")
 
-    # Extract Roll Data
-    pattern = re.compile(r"(\d{7})\s+([\d\-*]+)\s+(\d+\.\d+)\s+(\d+\.\d+)")
+    # --- 2. Data Extraction (Grid Layout Support) ---
+    # Regex Explanation:
+    # (\d{7})       -> Roll No (Exactly 7 digits)
+    # \s+           -> Space
+    # ([A-Za-z0-9\-\*]+) -> Lot Batch (Digits, Letters, Dash, Asterisk - matching your image format e.g. 544691-*-*-9)
+    # \s+           -> Space
+    # (\d+\.\d+)    -> Net Weight
+    # \s+           -> Space
+    # (\d+\.\d+)    -> Net Length
+    
+    pattern = re.compile(r"(\d{7})\s+([A-Za-z0-9\-\*]+)\s+(\d+\.\d+)\s+(\d+\.\d+)")
     matches = pattern.findall(text)
     
     for m in matches:
         rows.append({
             "Factory": "SOUTH ASIA", "File": file_name,
-            "Delivery/Shipment ID": s_id, "Main Batch": b_no,
-            "Color": c_info, "Fabric Type": f_info, "Roll No": m[0],
-            "Lot Batch": m[1], "Net Weight (Kg)": float(m[2]), "Net Length (yd)": float(m[3])
+            "Delivery/Shipment ID": s_id, 
+            "Main Batch": b_no,
+            "Color": c_info, 
+            "Fabric Type": f_info, 
+            "Roll No": m[0],
+            "Lot Batch": m[1], 
+            "Net Weight (Kg)": float(m[2]), 
+            "Net Length (yd)": float(m[3])
         })
     return rows, header_cache
 
 def extract_ocean_lanka_ai(raw_text, file_name, header_cache):
-    # Prompt is adjusted to handle single page content
-    prompt = f"Extract packing list details into JSON list (fields: Delivery_Sheet, Fabric_Type, Main_Batch, Color, Roll_No, Net_Weight, Net_Length) from this page content: {raw_text}"
+    prompt = f"Extract packing list details into JSON list (fields: Delivery_Sheet, Fabric_Type, Main_Batch, Color, Roll_No, Net_Weight, Net_Length) from page content: {raw_text}"
     ai_res = get_ai_response(prompt)
     rows = []
     if ai_res:
@@ -159,18 +172,15 @@ def extract_ocean_lanka_ai(raw_text, file_name, header_cache):
             if not isinstance(data, list): data = [data]
             
             for item in data:
-                # Fallback to cache if AI returns null for headers on continuation pages
-                d_sheet = item.get("Delivery_Sheet")
-                if d_sheet and str(d_sheet).lower() != "null": header_cache['d_sheet'] = d_sheet
-                
-                m_batch = item.get("Main_Batch")
-                if m_batch and str(m_batch).lower() != "null": header_cache['m_batch'] = m_batch
-
-                col = item.get("Color")
-                if col and str(col).lower() != "null": header_cache['col'] = col
-
-                ft = item.get("Fabric_Type")
-                if ft and str(ft).lower() != "null": header_cache['ft'] = ft
+                # Update Cache if valid header data found
+                if item.get("Delivery_Sheet") and str(item.get("Delivery_Sheet")).lower() != "null": 
+                    header_cache['d_sheet'] = item.get("Delivery_Sheet")
+                if item.get("Main_Batch") and str(item.get("Main_Batch")).lower() != "null": 
+                    header_cache['m_batch'] = item.get("Main_Batch")
+                if item.get("Color") and str(item.get("Color")).lower() != "null": 
+                    header_cache['col'] = item.get("Color")
+                if item.get("Fabric_Type") and str(item.get("Fabric_Type")).lower() != "null": 
+                    header_cache['ft'] = item.get("Fabric_Type")
 
                 rows.append({
                     "Factory": "OCEAN LANKA", "File": file_name,
@@ -178,7 +188,8 @@ def extract_ocean_lanka_ai(raw_text, file_name, header_cache):
                     "Main Batch": header_cache.get('m_batch', "N/A"),
                     "Color": header_cache.get('col', "N/A"), 
                     "Fabric Type": header_cache.get('ft', "N/A"),
-                    "Roll No": item.get("Roll_No"), "Lot Batch": header_cache.get('m_batch', "N/A"),
+                    "Roll No": item.get("Roll_No"), 
+                    "Lot Batch": header_cache.get('m_batch', "N/A"),
                     "Net Weight (Kg)": float(item.get("Net_Weight", 0)), 
                     "Net Length (yd)": float(item.get("Net_Length", 0))
                 })
@@ -203,7 +214,7 @@ st.subheader(f"Upload {factory_type} Packing Lists (PDF)")
 uploaded_files = st.file_uploader("Upload files", type=["pdf"], accept_multiple_files=True, 
                                   key=f"up_{st.session_state.uploader_key}", label_visibility="collapsed")
 
-# --- 7. PROCESSING WITH PROGRESS BAR & SUCCESS ANIMATION ---
+# --- 7. PROCESSING LOOP (MULTI-PAGE ENABLED) ---
 if uploaded_files:
     all_data = []
     
@@ -212,47 +223,48 @@ if uploaded_files:
     status_text = st.empty()
     total_files = len(uploaded_files)
 
-    with st.status("Gemini 3 Flash Processing (Multi-Page)...", expanded=True) as status:
+    with st.status("Gemini 3 Flash Processing (Deep Scan)...", expanded=True) as status:
         for idx, file in enumerate(uploaded_files):
-            # Update Progress
             percent_complete = (idx + 1) / total_files
             progress_bar.progress(percent_complete)
             status_text.text(f"Processing File {idx+1} of {total_files}: {file.name}")
             
-            # Initialize Header Cache for this file
+            # Reset Header Cache for each NEW file
             header_cache = {} 
 
             with pdfplumber.open(file) as pdf:
-                # ITERATE THROUGH EVERY PAGE (UPDATED LOGIC)
+                # Iterate through ALL pages
                 for page_num, page in enumerate(pdf.pages):
                     page_text = page.extract_text()
                     if not page_text: continue
                     
                     if factory_type == "SOUTH ASIA":
+                        # Pass cache to function to remember headers from prev pages
                         page_rows, header_cache = extract_south_asia(page_text, file.name, header_cache)
                         all_data.extend(page_rows)
                     else:
-                        # For AI, we process page by page to avoid token limits and context loss
+                        # AI extraction with caching
                         page_rows, header_cache = extract_ocean_lanka_ai(page_text, file.name, header_cache)
                         all_data.extend(page_rows)
-                        time.sleep(0.5) # Prevent rate limiting
+                        time.sleep(0.5) # Prevent Rate Limiting
         
-        status.update(label="Analysis Completed Successfully!", state="complete", expanded=False)
+        status.update(label="Extraction Completed Successfully!", state="complete", expanded=False)
         status_text.empty()
         progress_bar.empty()
 
     if all_data:
-        # --- SUCCESS ANIMATION & TOAST ---
+        # --- SUCCESS UI ---
         col_s1, col_s2, col_s3 = st.columns([2, 1, 2])
         with col_s2:
             if lottie_success:
                 st_lottie(lottie_success, height=180, key="success_check", loop=False)
         
-        st.toast("Success! Data extracted and verified.", icon='✅')
+        st.toast("Success! Multi-page data verified.", icon='✅')
         time.sleep(1)
 
         df = pd.DataFrame(all_data)
         
+        # --- RESULT DISPLAY ---
         st.markdown("### 📊 Shipment Wise Verification")
         shipment_ids = df['Delivery/Shipment ID'].unique()
         
