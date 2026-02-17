@@ -111,7 +111,7 @@ def get_ai_response(prompt):
         try:
             genai.configure(api_key=key)
             model = genai.GenerativeModel(
-                model_name='gemini-2.0-flash', 
+                model_name='gemini-3-flash-preview', 
                 generation_config={"response_mime_type": "application/json"}
             )
             response = model.generate_content(prompt)
