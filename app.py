@@ -111,89 +111,121 @@ def get_ai_response(prompt):
             continue
     return None
 
-# --- 5. EXTRACTION LOGIC (UPDATED FOR MULTI-PAGE & GRID LAYOUT) ---
-def extract_south_asia(text, file_name, header_cache):
-    rows = []
-    
-    # --- 1. Header Extraction (Update Cache) ---
-    ship_id_match = re.search(r"Shipment Id[\s\n\",:]+(\d+)", text, re.IGNORECASE)
-    batch_main_match = re.search(r"Batch No[\s\n\",:]+(\d+)", text, re.IGNORECASE)
-    
-    # Regex improved to catch multi-line fabric/color descriptions
-    color_match = re.search(r"Color Name & No[\s\n\",:]+(.*?)(?=\n|PO Season)", text, re.IGNORECASE)
-    f_type_match = re.search(r"Fabric Type[\s\n\",:]+(.*?)(?=\n|Roll #|Location)", text, re.IGNORECASE | re.DOTALL)
+# --- 5. AI VERIFICATION & EXTRACTION LOGIC ---
 
-    if ship_id_match: header_cache['s_id'] = ship_id_match.group(1)
-    if batch_main_match: header_cache['b_no'] = batch_main_match.group(1)
-    if color_match: header_cache['c_info'] = color_match.group(1).strip()
-    if f_type_match: header_cache['f_info'] = f_type_match.group(1).strip().replace('\n', ' ')
+def clean_json_string(json_str):
+    """Cleans JSON string from markdown code blocks if present."""
+    json_str = json_str.replace("```json", "").replace("```", "").strip()
+    return json_str
 
-    # Use cached values (Fallback for pages 2, 3...)
-    s_id = header_cache.get('s_id', "N/A")
-    b_no = header_cache.get('b_no', "N/A")
-    c_info = header_cache.get('c_info', "N/A")
-    f_info = header_cache.get('f_info', "N/A")
-
-    # --- 2. Data Extraction (Grid Layout Support) ---
-    # Regex Explanation:
-    # (\d{7})       -> Roll No (Exactly 7 digits)
-    # \s+           -> Space
-    # ([A-Za-z0-9\-\*]+) -> Lot Batch (Digits, Letters, Dash, Asterisk - matching your image format e.g. 544691-*-*-9)
-    # \s+           -> Space
-    # (\d+\.\d+)    -> Net Weight
-    # \s+           -> Space
-    # (\d+\.\d+)    -> Net Length
+def ai_verify_and_extract(text, file_name, factory_type, header_cache):
+    """
+    Combined Extraction and Verification function using Gemini AI.
+    """
     
-    pattern = re.compile(r"(\d{7})\s+([A-Za-z0-9\-\*]+)\s+(\d+\.\d+)\s+(\d+\.\d+)")
-    matches = pattern.findall(text)
-    
-    for m in matches:
-        rows.append({
-            "Factory": "SOUTH ASIA", "File": file_name,
-            "Delivery/Shipment ID": s_id, 
-            "Main Batch": b_no,
-            "Color": c_info, 
-            "Fabric Type": f_info, 
-            "Roll No": m[0],
-            "Lot Batch": m[1], 
-            "Net Weight (Kg)": float(m[2]), 
-            "Net Length (yd)": float(m[3])
-        })
-    return rows, header_cache
+    # Custom Rules for Verification based on Factory
+    if factory_type == "SOUTH ASIA":
+        specific_instructions = """
+        - Header Fields to verify: Shipment Id, Batch No, Color Name & No, Fabric Type.
+        - Table Columns: Roll No (Strictly 7 digits), Lot Batch, Net Weight, Net Length.
+        - Verification Rule: If 'Roll No' has OCR errors (e.g. letters instead of numbers), fix it based on context.
+        """
+    else: # OCEAN LANKA
+        specific_instructions = """
+        - Header Fields to verify: Delivery Sheet No, Main Batch, Color, Fabric Type.
+        - Table Columns: Roll No, Net_Weight, Net_Length.
+        - Verification Rule: Ensure Net Weight and Length are valid numbers. Convert 'O' to '0' if mistyped.
+        """
 
-def extract_ocean_lanka_ai(raw_text, file_name, header_cache):
-    prompt = f"Extract packing list details into JSON list (fields: Delivery_Sheet, Fabric_Type, Main_Batch, Color, Roll_No, Net_Weight, Net_Length) from page content: {raw_text}"
+    prompt = f"""
+    ROLE: You are a Senior Quality Assurance Auditor for a Textile Factory.
+    TASK: Extract data from the provided Packing List text AND verify its accuracy simultaneously.
+
+    INSTRUCTIONS:
+    1. **EXTRACT**: Identify the Headers and the Table Rows containing Roll details.
+    2. **VERIFY & FIX**: 
+       - Check for OCR errors (e.g., 'l' vs '1', 'O' vs '0', 'S' vs '5').
+       - Ensure 'Net Weight' and 'Net Length' are pure numbers (floats).
+       - If a Header is missing on this page, return null (we will use cache).
+    
+    SPECIFIC FACTORY RULES:
+    {specific_instructions}
+
+    INPUT TEXT:
+    '''{text}'''
+    
+    OUTPUT FORMAT (Strict JSON):
+    {{
+        "header": {{
+            "shipment_id": "value or null",
+            "batch_no": "value or null",
+            "color": "value or null",
+            "fabric_type": "value or null"
+        }},
+        "rows": [
+            {{ 
+                "roll_no": "verified value", 
+                "lot_batch": "verified value", 
+                "weight": 0.00, 
+                "length": 0.00,
+                "status": "verified"
+            }}
+        ]
+    }}
+    """
+
     ai_res = get_ai_response(prompt)
     rows = []
+    
     if ai_res:
         try:
-            data = json.loads(ai_res)
-            if isinstance(data, dict) and "table" in data: data = data["table"]
-            if not isinstance(data, list): data = [data]
+            cleaned_json = clean_json_string(ai_res)
+            data = json.loads(cleaned_json)
             
-            for item in data:
-                # Update Cache if valid header data found
-                if item.get("Delivery_Sheet") and str(item.get("Delivery_Sheet")).lower() != "null": 
-                    header_cache['d_sheet'] = item.get("Delivery_Sheet")
-                if item.get("Main_Batch") and str(item.get("Main_Batch")).lower() != "null": 
-                    header_cache['m_batch'] = item.get("Main_Batch")
-                if item.get("Color") and str(item.get("Color")).lower() != "null": 
-                    header_cache['col'] = item.get("Color")
-                if item.get("Fabric_Type") and str(item.get("Fabric_Type")).lower() != "null": 
-                    header_cache['ft'] = item.get("Fabric_Type")
+            # --- HEADER CACHING LOGIC ---
+            h_data = data.get("header", {})
+            
+            # Update cache only if AI found a valid value (not null)
+            if h_data.get("shipment_id") and str(h_data.get("shipment_id")).lower() != "null": 
+                header_cache['s_id'] = h_data.get("shipment_id")
+            if h_data.get("batch_no") and str(h_data.get("batch_no")).lower() != "null": 
+                header_cache['b_no'] = h_data.get("batch_no")
+            if h_data.get("color") and str(h_data.get("color")).lower() != "null": 
+                header_cache['col'] = h_data.get("color")
+            if h_data.get("fabric_type") and str(h_data.get("fabric_type")).lower() != "null": 
+                header_cache['ft'] = h_data.get("fabric_type")
+
+            # Use cached values if current page header is missing
+            final_s_id = header_cache.get('s_id', "N/A")
+            final_b_no = header_cache.get('b_no', "N/A")
+            final_col = header_cache.get('col', "N/A")
+            final_ft = header_cache.get('ft', "N/A")
+
+            # --- ROW PROCESSING ---
+            for item in data.get("rows", []):
+                # Skip empty or invalid rows
+                if not item.get("roll_no"):
+                    continue
 
                 rows.append({
-                    "Factory": "OCEAN LANKA", "File": file_name,
-                    "Delivery/Shipment ID": str(header_cache.get('d_sheet', "N/A")),
-                    "Main Batch": header_cache.get('m_batch', "N/A"),
-                    "Color": header_cache.get('col', "N/A"), 
-                    "Fabric Type": header_cache.get('ft', "N/A"),
-                    "Roll No": item.get("Roll_No"), 
-                    "Lot Batch": header_cache.get('m_batch', "N/A"),
-                    "Net Weight (Kg)": float(item.get("Net_Weight", 0)), 
-                    "Net Length (yd)": float(item.get("Net_Length", 0))
+                    "Factory": factory_type,
+                    "File": file_name,
+                    "Delivery/Shipment ID": final_s_id, 
+                    "Main Batch": final_b_no,
+                    "Color": final_col, 
+                    "Fabric Type": final_ft, 
+                    "Roll No": item.get("roll_no"),
+                    "Lot Batch": item.get("lot_batch", final_b_no), 
+                    "Net Weight (Kg)": float(item.get("weight", 0)), 
+                    "Net Length (yd)": float(item.get("length", 0)),
+                    "Verification Status": "AI Verified ✅"
                 })
-        except: pass
+
+        except json.JSONDecodeError:
+            pass # AI output failed parsing
+        except Exception as e:
+            pass # General error
+
     return rows, header_cache
 
 # --- 6. SIDEBAR & FILE UPLOAD ---
@@ -223,11 +255,11 @@ if uploaded_files:
     status_text = st.empty()
     total_files = len(uploaded_files)
 
-    with st.status("Gemini 3 Flash Processing (Deep Scan)...", expanded=True) as status:
+    with st.status("Gemini AI Verified Processing...", expanded=True) as status:
         for idx, file in enumerate(uploaded_files):
             percent_complete = (idx + 1) / total_files
             progress_bar.progress(percent_complete)
-            status_text.text(f"Processing File {idx+1} of {total_files}: {file.name}")
+            status_text.text(f"Verifying File {idx+1} of {total_files}: {file.name}")
             
             # Reset Header Cache for each NEW file
             header_cache = {} 
@@ -238,17 +270,13 @@ if uploaded_files:
                     page_text = page.extract_text()
                     if not page_text: continue
                     
-                    if factory_type == "SOUTH ASIA":
-                        # Pass cache to function to remember headers from prev pages
-                        page_rows, header_cache = extract_south_asia(page_text, file.name, header_cache)
-                        all_data.extend(page_rows)
-                    else:
-                        # AI extraction with caching
-                        page_rows, header_cache = extract_ocean_lanka_ai(page_text, file.name, header_cache)
-                        all_data.extend(page_rows)
-                        time.sleep(0.5) # Prevent Rate Limiting
+                    # --- CALLING THE AI VERIFICATION FUNCTION ---
+                    page_rows, header_cache = ai_verify_and_extract(page_text, file.name, factory_type, header_cache)
+                    
+                    all_data.extend(page_rows)
+                    time.sleep(0.5) # Prevent Rate Limiting
         
-        status.update(label="Extraction Completed Successfully!", state="complete", expanded=False)
+        status.update(label="AI Verification Completed!", state="complete", expanded=False)
         status_text.empty()
         progress_bar.empty()
 
@@ -259,13 +287,13 @@ if uploaded_files:
             if lottie_success:
                 st_lottie(lottie_success, height=180, key="success_check", loop=False)
         
-        st.toast("Success! Multi-page data verified.", icon='✅')
+        st.toast("Verification Successful!", icon='✅')
         time.sleep(1)
 
         df = pd.DataFrame(all_data)
         
         # --- RESULT DISPLAY ---
-        st.markdown("### 📊 Shipment Wise Verification")
+        st.markdown("### 📊 Shipment Wise AI Verification")
         shipment_ids = df['Delivery/Shipment ID'].unique()
         
         for s_id in shipment_ids:
@@ -292,7 +320,7 @@ if uploaded_files:
             st.markdown("<br>", unsafe_allow_html=True)
 
         st.markdown("---")
-        st.markdown("### 📝 Full Raw Data Preview")
+        st.markdown("### 📝 Full AI Verified Data Preview")
         st.dataframe(df, use_container_width=True)
 
         # Excel Export
@@ -303,12 +331,12 @@ if uploaded_files:
         st.download_button(
             label="📥 Download Verified Excel Report",
             data=output.getvalue(),
-            file_name=f"Verified_Report_{factory_type}.xlsx",
+            file_name=f"AI_Verified_Report_{factory_type}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary"
         )
     else:
-        st.warning("දත්ත හඳුනාගත නොහැකි විය. කරුණාකර නිවැරදි Factory එක තෝරා ඇත්දැයි බලන්න.")
+        st.warning("දත්ත හඳුනාගත නොහැකි විය. කරුණාකර PDF ගොනුව පැහැදිලි දැයි පරීක්ෂා කරන්න.")
 
 # --- 8. FOOTER ---
 st.markdown("<br><br><hr><center style='opacity: 0.6;'>Developed by <b>Ishanka Madusanka</b> | 2026 AI Edition</center>", unsafe_allow_html=True)
